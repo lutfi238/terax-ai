@@ -17,6 +17,10 @@ import { useAgentsStore } from "./agentsStore";
 import { usePlanStore } from "./planStore";
 import { useTodosStore } from "./todoStore";
 import type { AgentUsage } from "../lib/agent";
+import {
+  DEFAULT_AI_AUTO_APPROVE,
+  type AiAutoApproveSettings,
+} from "@/modules/settings/store";
 import { EMPTY_PROVIDER_KEYS, type ProviderKeys } from "../lib/keyring";
 import {
   deleteSessionData,
@@ -90,10 +94,7 @@ export type PendingSelection = {
   source: "terminal" | "editor";
 };
 
-export type ApprovalResponder = (
-  approvalId: string,
-  approved: boolean,
-) => void;
+export type ApprovalResponder = (approvalId: string, approved: boolean) => void;
 
 type StoreState = {
   live: Live;
@@ -210,16 +211,16 @@ function makeChat(sessionId: string): Chat<UIMessage> {
   const readCache = new Map<string, { size: number; hash: number }>();
   const toolContext: ToolContext = {
     getCwd: () => useChatStore.getState().live.getCwd(),
-    getWorkspaceRoot: () =>
-      useChatStore.getState().live.getWorkspaceRoot(),
-    getTerminalContext: () =>
-      useChatStore.getState().live.getTerminalContext(),
+    getWorkspaceRoot: () => useChatStore.getState().live.getWorkspaceRoot(),
+    getTerminalContext: () => useChatStore.getState().live.getTerminalContext(),
     isActiveTerminalPrivate: () =>
       useChatStore.getState().live.isActiveTerminalPrivate(),
     injectIntoActivePty: (text) =>
       useChatStore.getState().live.injectIntoActivePty(text),
     openPreview: (url) => useChatStore.getState().live.openPreview(url),
     readCache,
+    getAutoApprove: (): AiAutoApproveSettings =>
+      usePreferencesStore.getState().aiAutoApprove ?? DEFAULT_AI_AUTO_APPROVE,
     getSessionId: () => sessionId,
   };
 
@@ -354,7 +355,10 @@ export const useChatStore = create<StoreState>((set, get) => ({
     set((s) => ({
       panelOpen: true,
       focusSignal: s.focusSignal + 1,
-      pendingSelections: [...s.pendingSelections, { id, text: trimmed, source }],
+      pendingSelections: [
+        ...s.pendingSelections,
+        { id, text: trimmed, source },
+      ],
     }));
   },
   consumeSelections: () => {
@@ -547,7 +551,11 @@ export async function sendMessage(text: string): Promise<boolean> {
   const state = useChatStore.getState();
   const sessionId = state.activeSessionId;
   if (!sessionId) return false;
-  if (providerNeedsKey(getModel(state.selectedModelId).provider) && !getActiveProviderKey()) return false;
+  if (
+    providerNeedsKey(getModel(state.selectedModelId).provider) &&
+    !getActiveProviderKey()
+  )
+    return false;
   const c = getOrCreateChat(sessionId);
   await c.sendMessage({ text });
   return true;

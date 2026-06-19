@@ -1,3 +1,5 @@
+import type { AiAutoApproveSettings } from "@/modules/settings/store";
+
 export type ToolContext = {
   /** Active terminal tab cwd, used to resolve relative paths. Null = home. */
   getCwd: () => string | null;
@@ -7,14 +9,15 @@ export type ToolContext = {
   getTerminalContext: () => string | null;
   isActiveTerminalPrivate: () => boolean;
   /**
-   * Type a string into the active terminal at the prompt — without executing.
+   * Type a string into the active terminal at the prompt without executing.
    * Returns false if there is no active terminal tab to inject into.
    */
   injectIntoActivePty: (text: string) => boolean;
   /** Open a new preview tab (in-app iframe) at the given URL. */
   openPreview: (url: string) => boolean;
   readCache: Map<string, { size: number; hash: number }>;
-  /** Active chat session id — used by tools that persist per-session state (todos). */
+  getAutoApprove: () => AiAutoApproveSettings;
+  /** Active chat session id used by tools that persist per-session state (todos). */
   getSessionId: () => string | null;
 };
 

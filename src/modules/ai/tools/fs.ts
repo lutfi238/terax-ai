@@ -21,7 +21,7 @@ export function buildFsTools(ctx: ToolContext) {
   return {
     read_file: tool({
       description:
-        "Read a UTF-8 text file. Defaults to the first 2000 lines (capped at 25KB). Pass `offset`/`limit` for line-based windowing of large files. Refuses binary, oversized, or sensitive files (.env, keys, credentials). If you call this on the same path twice in a session without edits in between, the second call returns `unchanged: true` instead of re-emitting the content — re-read the prior tool result.",
+        "Read a UTF-8 text file. Defaults to the first 2000 lines (capped at 25KB). Pass `offset`/`limit` for line-based windowing of large files. Refuses binary, oversized, or sensitive files (.env, keys, credentials). If you call this on the same path twice in a session without edits in between, the second call returns `unchanged: true` instead of re-emitting the content. Re-read the prior tool result.",
       inputSchema: z.object({
         path: z
           .string()
@@ -42,7 +42,10 @@ export function buildFsTools(ctx: ToolContext) {
       }),
       execute: async ({ path, offset, limit }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
-        const safety = await checkReadableCanonical(reqPath, native.canonicalize);
+        const safety = await checkReadableCanonical(
+          reqPath,
+          native.canonicalize,
+        );
         if (!safety.ok) return { error: safety.reason, path: reqPath };
         const abs = safety.canonical;
         try {
@@ -58,7 +61,12 @@ export function buildFsTools(ctx: ToolContext) {
           const hash = djb2(r.content);
           const isFullRead = offset === undefined && limit === undefined;
           const prior = ctx.readCache.get(abs);
-          if (isFullRead && prior && prior.size === r.size && prior.hash === hash) {
+          if (
+            isFullRead &&
+            prior &&
+            prior.size === r.size &&
+            prior.hash === hash
+          ) {
             return { path: abs, unchanged: true, size: r.size };
           }
           ctx.readCache.set(abs, { size: r.size, hash });
@@ -78,7 +86,10 @@ export function buildFsTools(ctx: ToolContext) {
               size: r.size,
               total_lines: lines.length,
               ...(truncated
-                ? { truncated: true, hint: "call read_file with offset to continue" }
+                ? {
+                    truncated: true,
+                    hint: "call read_file with offset to continue",
+                  }
                 : {}),
             };
           }
@@ -118,7 +129,10 @@ export function buildFsTools(ctx: ToolContext) {
       }),
       execute: async ({ path }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
-        const safety = await checkReadableCanonical(reqPath, native.canonicalize);
+        const safety = await checkReadableCanonical(
+          reqPath,
+          native.canonicalize,
+        );
         if (!safety.ok) return { error: safety.reason, path: reqPath };
         const abs = safety.canonical;
         try {
@@ -135,15 +149,18 @@ export function buildFsTools(ctx: ToolContext) {
 
     write_file: tool({
       description:
-        "Create or overwrite a file with the given content. Always asks the user before running. Prefer `edit` / `multi_edit` for in-place changes — only use `write_file` for creating a brand-new file or fully replacing a tiny one.",
+        "Create or overwrite a file with the given content. Asks the user before running unless write-file auto approval is enabled. Prefer `edit` / `multi_edit` for in-place changes. Only use `write_file` for creating a brand-new file or fully replacing a tiny one.",
       inputSchema: z.object({
         path: z.string(),
         content: z.string(),
       }),
-      needsApproval: true,
+      needsApproval: () => !ctx.getAutoApprove().writeFile,
       execute: async ({ path, content }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
-        const safety = await checkWritableCanonical(reqPath, native.canonicalize);
+        const safety = await checkWritableCanonical(
+          reqPath,
+          native.canonicalize,
+        );
         if (!safety.ok) return { error: safety.reason, path: reqPath };
         const abs = safety.canonical;
 
@@ -183,14 +200,17 @@ export function buildFsTools(ctx: ToolContext) {
 
     create_directory: tool({
       description:
-        "Create a directory (and any missing parents). Always asks the user before running.",
+        "Create a directory and any missing parents. Asks the user before running unless directory auto approval is enabled.",
       inputSchema: z.object({
         path: z.string(),
       }),
-      needsApproval: true,
+      needsApproval: () => !ctx.getAutoApprove().createDirectory,
       execute: async ({ path }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
-        const safety = await checkWritableCanonical(reqPath, native.canonicalize);
+        const safety = await checkWritableCanonical(
+          reqPath,
+          native.canonicalize,
+        );
         if (!safety.ok) return { error: safety.reason, path: reqPath };
         const abs = safety.canonical;
         if (usePlanStore.getState().active) {

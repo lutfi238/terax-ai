@@ -46,6 +46,14 @@ export const EDITOR_THEME_LABELS: Record<EditorThemeId, string> = {
   "xcode-light": "Xcode Light",
 };
 
+export type AiAutoApproveSettings = {
+  writeFile: boolean;
+  edit: boolean;
+  createDirectory: boolean;
+  bashRun: boolean;
+  bashBackground: boolean;
+};
+
 export type Preferences = {
   theme: ThemePref;
   themeId: string;
@@ -82,6 +90,7 @@ export type Preferences = {
   lastWslDistro: string | null;
   zoomLevel: number;
   agentNotifications: boolean;
+  aiAutoApprove: AiAutoApproveSettings;
   shortcuts: Record<ShortcutId, KeyBinding[]>;
 };
 
@@ -122,6 +131,7 @@ const KEY_TERMINAL_SCROLLBACK = "terminalScrollback";
 const KEY_LAST_WSL_DISTRO = "lastWslDistro";
 const KEY_ZOOM_LEVEL = "zoomLevel";
 const KEY_AGENT_NOTIFICATIONS = "agentNotifications";
+const KEY_AI_AUTO_APPROVE = "aiAutoApprove";
 const KEY_SHORTCUTS = "shortcuts";
 
 export const TERMINAL_FONT_SIZE_DEFAULT = 14;
@@ -138,6 +148,14 @@ export const TERMINAL_SCROLLBACK_MAX = 50_000;
 export const TERMINAL_SCROLLBACK_PRESETS = [
   500, 1000, 2000, 5000, 10_000, 25_000,
 ] as const;
+
+export const DEFAULT_AI_AUTO_APPROVE: AiAutoApproveSettings = {
+  writeFile: false,
+  edit: false,
+  createDirectory: false,
+  bashRun: false,
+  bashBackground: false,
+};
 
 export const DEFAULT_PREFERENCES: Preferences = {
   theme: "system",
@@ -175,10 +193,25 @@ export const DEFAULT_PREFERENCES: Preferences = {
   lastWslDistro: null,
   zoomLevel: 1.0,
   agentNotifications: true,
+  aiAutoApprove: DEFAULT_AI_AUTO_APPROVE,
   shortcuts: {} as Record<ShortcutId, KeyBinding[]>,
 };
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 200 });
+
+function normalizeAiAutoApprove(value: unknown): AiAutoApproveSettings {
+  const raw =
+    value && typeof value === "object"
+      ? (value as Partial<Record<keyof AiAutoApproveSettings, unknown>>)
+      : {};
+  return {
+    writeFile: raw.writeFile === true,
+    edit: raw.edit === true,
+    createDirectory: raw.createDirectory === true,
+    bashRun: raw.bashRun === true,
+    bashBackground: raw.bashBackground === true,
+  };
+}
 
 // LazyStore.onChange only fires within the writing process. The settings
 // page lives in a separate webview, so writes there never reach the main
@@ -193,7 +226,7 @@ async function writePref<T>(key: string, value: T): Promise<void> {
 }
 
 export async function loadPreferences(): Promise<Preferences> {
-  // Single IPC roundtrip — fetching keys individually fans out to one
+  // Single IPC roundtrip. Fetching keys individually fans out to one
   // `plugin:store|get` per setting and is the dominant boot cost.
   const entries = await store.entries();
   const map = new Map<string, unknown>(entries);
@@ -236,10 +269,8 @@ export async function loadPreferences(): Promise<Preferences> {
       get<string>(KEY_LMSTUDIO_BASE_URL) ?? DEFAULT_PREFERENCES.lmstudioBaseURL,
     lmstudioModelId:
       get<string>(KEY_LMSTUDIO_MODEL_ID) ?? DEFAULT_PREFERENCES.lmstudioModelId,
-    mlxBaseURL:
-      get<string>(KEY_MLX_BASE_URL) ?? DEFAULT_PREFERENCES.mlxBaseURL,
-    mlxModelId:
-      get<string>(KEY_MLX_MODEL_ID) ?? DEFAULT_PREFERENCES.mlxModelId,
+    mlxBaseURL: get<string>(KEY_MLX_BASE_URL) ?? DEFAULT_PREFERENCES.mlxBaseURL,
+    mlxModelId: get<string>(KEY_MLX_MODEL_ID) ?? DEFAULT_PREFERENCES.mlxModelId,
     ollamaBaseURL:
       get<string>(KEY_OLLAMA_BASE_URL) ?? DEFAULT_PREFERENCES.ollamaBaseURL,
     ollamaModelId:
@@ -286,6 +317,7 @@ export async function loadPreferences(): Promise<Preferences> {
     agentNotifications:
       get<boolean>(KEY_AGENT_NOTIFICATIONS) ??
       DEFAULT_PREFERENCES.agentNotifications,
+    aiAutoApprove: normalizeAiAutoApprove(get(KEY_AI_AUTO_APPROVE)),
     shortcuts:
       get<Record<ShortcutId, KeyBinding[]>>(KEY_SHORTCUTS) ??
       DEFAULT_PREFERENCES.shortcuts,
@@ -301,7 +333,7 @@ export async function setThemeId(value: string): Promise<void> {
 }
 
 /** Slider stores 0..1. Actual rendered opacity is halved in SurfaceLayer
- *  so the image never exceeds 50% — keeps UI/terminal readable at any setting. */
+ *  so the image never exceeds 50% and UI/terminal content stays readable. */
 export const BG_OPACITY_RENDER_FACTOR = 0.5;
 
 function clampBgOpacity(v: number): number {
@@ -318,7 +350,9 @@ export async function setBackgroundKind(value: BackgroundKind): Promise<void> {
   await writePref(KEY_BG_KIND, value);
 }
 
-export async function setBackgroundImageId(value: string | null): Promise<void> {
+export async function setBackgroundImageId(
+  value: string | null,
+): Promise<void> {
   await writePref(KEY_BG_IMAGE_ID, value);
 }
 
@@ -329,7 +363,6 @@ export async function setBackgroundOpacity(value: number): Promise<void> {
 export async function setBackgroundBlur(value: number): Promise<void> {
   await writePref(KEY_BG_BLUR, clampBlur(value));
 }
-
 
 export async function setDefaultModel(value: ModelId): Promise<void> {
   await writePref(KEY_DEFAULT_MODEL, value);
@@ -431,7 +464,9 @@ export async function setTerminalFontFamily(value: string): Promise<void> {
 }
 
 export async function setTerminalLetterSpacing(value: number): Promise<void> {
-  const clamped = Number.isFinite(value) ? Math.max(-10, Math.min(10, Math.round(value))) : 0;
+  const clamped = Number.isFinite(value)
+    ? Math.max(-10, Math.min(10, Math.round(value)))
+    : 0;
   await writePref(KEY_TERMINAL_LETTER_SPACING, clamped);
 }
 
@@ -467,6 +502,20 @@ export async function setZoomLevel(value: number): Promise<void> {
 
 export async function setAgentNotifications(value: boolean): Promise<void> {
   await writePref(KEY_AGENT_NOTIFICATIONS, value);
+}
+
+export async function setAiAutoApprove(
+  value: AiAutoApproveSettings,
+): Promise<void> {
+  await writePref(KEY_AI_AUTO_APPROVE, normalizeAiAutoApprove(value));
+}
+
+export async function setAiAutoApproveKey(
+  key: keyof AiAutoApproveSettings,
+  value: boolean,
+): Promise<void> {
+  const current = normalizeAiAutoApprove(await store.get(KEY_AI_AUTO_APPROVE));
+  await setAiAutoApprove({ ...current, [key]: value });
 }
 
 export async function setShortcuts(
@@ -521,6 +570,7 @@ export async function onPreferencesChange(
     [KEY_LAST_WSL_DISTRO]: "lastWslDistro",
     [KEY_ZOOM_LEVEL]: "zoomLevel",
     [KEY_AGENT_NOTIFICATIONS]: "agentNotifications",
+    [KEY_AI_AUTO_APPROVE]: "aiAutoApprove",
     [KEY_SHORTCUTS]: "shortcuts",
   };
   // Same-process writes still fire onChange immediately; cross-window writes
