@@ -214,13 +214,10 @@ pub fn diff_content(
     let repo_root = authorized_repo_root(registry, repo_root, workspace)?;
     ensure_git_available(&repo_root.workspace)?;
     let worktree_path = resolve_within_repo(&repo_root.local_path, path)?;
-    let rel_path = pathspec(&repo_root.local_path, &worktree_path);
+    let rel_path = normalized_pathspec(path);
 
     let original_rel = match original_path {
-        Some(orig) if !orig.is_empty() => {
-            let resolved = resolve_within_repo(&repo_root.local_path, orig)?;
-            Some(pathspec(&repo_root.local_path, &resolved))
-        }
+        Some(orig) if !orig.is_empty() => Some(pathspec_from_input(&repo_root.local_path, orig)?),
         _ => None,
     };
 
@@ -960,15 +957,12 @@ fn resolve_pathspecs(repo_root: &Path, paths: &[String]) -> Result<Vec<String>> 
 }
 
 fn pathspec_from_input(repo_root: &Path, rel: &str) -> Result<String> {
-    let resolved = resolve_within_repo(repo_root, rel)?;
-    Ok(pathspec(repo_root, &resolved))
+    resolve_within_repo(repo_root, rel)?;
+    Ok(normalized_pathspec(rel))
 }
 
-fn pathspec(repo_root: &Path, absolute: &Path) -> String {
-    absolute
-        .strip_prefix(repo_root)
-        .map(|rel| rel.to_string_lossy().replace('\\', "/"))
-        .unwrap_or_else(|_| absolute.to_string_lossy().replace('\\', "/"))
+fn normalized_pathspec(rel: &str) -> String {
+    rel.replace('\\', "/")
 }
 
 pub fn list_branches(
@@ -1203,6 +1197,73 @@ mod tests {
         let file = &unstaged.changed_files[0];
         assert_eq!(
             (file.index_status.as_str(), file.worktree_status.as_str()),
+            (" ", "M")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn preserves_git_index_case_for_diff_stage_and_unstage() {
+        let temp = tempfile::tempdir().expect("temp repo");
+        let root = temp.path();
+        git(root, &["init", "-q"]);
+        git(
+            root,
+            &["config", "user.email", "terax-test@example.invalid"],
+        );
+        git(root, &["config", "user.name", "Terax Test"]);
+        fs::write(root.join("PROGRESS.md"), "before\n").expect("seed file");
+        git(root, &["add", "PROGRESS.md"]);
+        git(root, &["commit", "-qm", "chore: seed fixture"]);
+        fs::rename(root.join("PROGRESS.md"), root.join("case-swap.tmp"))
+            .expect("rename through temporary file");
+        fs::rename(root.join("case-swap.tmp"), root.join("progress.md"))
+            .expect("change worktree casing");
+        fs::write(root.join("progress.md"), "before\nafter\n").expect("modify file");
+
+        let registry = WorkspaceRegistry::default();
+        let canonical = registry.authorize(root).expect("authorize fixture");
+        let repo_root = canonical.to_string_lossy().to_string();
+        let workspace = WorkspaceEnv::Local;
+
+        let before = status(&registry, &repo_root, &workspace).expect("status before");
+        let entry = &before.changed_files[0];
+        assert_eq!(entry.path, "PROGRESS.md");
+
+        let diff = diff_content(&registry, &repo_root, &entry.path, false, None, &workspace)
+            .expect("load unstaged diff");
+        assert_eq!(diff.original_content, "before\n");
+        assert_eq!(diff.modified_content, "before\nafter\n");
+
+        stage(
+            &registry,
+            &repo_root,
+            std::slice::from_ref(&entry.path),
+            &workspace,
+        )
+        .expect("stage tracked file");
+        let staged = status(&registry, &repo_root, &workspace).expect("status staged");
+        assert_eq!(
+            (
+                staged.changed_files[0].index_status.as_str(),
+                staged.changed_files[0].worktree_status.as_str(),
+            ),
+            ("M", " ")
+        );
+
+        unstage(
+            &registry,
+            &repo_root,
+            std::slice::from_ref(&entry.path),
+            &workspace,
+        )
+        .expect("unstage tracked file");
+        let unstaged = status(&registry, &repo_root, &workspace).expect("status unstaged");
+        assert_eq!(
+            (
+                unstaged.changed_files[0].index_status.as_str(),
+                unstaged.changed_files[0].worktree_status.as_str(),
+            ),
             (" ", "M")
         );
     }
