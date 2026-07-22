@@ -17,6 +17,16 @@ export type Agent = {
   builtIn: boolean;
 };
 
+export type ApprovalPolicy = "review" | "autonomous";
+export const YOLO_AGENT_ID = "builtin:yolo";
+
+export function approvalPolicyForRun(
+  agentId: string,
+  planMode: boolean,
+): ApprovalPolicy {
+  return !planMode && agentId === YOLO_AGENT_ID ? "autonomous" : "review";
+}
+
 export const BUILTIN_AGENTS: readonly Agent[] = [
   {
     id: "builtin:coder",
@@ -76,6 +86,20 @@ export const BUILTIN_AGENTS: readonly Agent[] = [
 - Critique on: hierarchy, spacing, density, contrast, motion, affordance, empty/error states.
 - Propose concrete changes, with Tailwind/CSS values when helpful. Keep consistent with the surrounding design system.
 - Avoid generic "make it pop" advice. Be specific about what's wrong and why.`,
+  },
+  {
+    id: YOLO_AGENT_ID,
+    name: "YOLO",
+    description:
+      "Fully autonomous coding loop. Executes tools without prompts.",
+    icon: "spark",
+    builtIn: true,
+    instructions: `You are an autonomous senior software engineer. Complete the user's task end to end without asking for routine tool approval.
+- Inspect the repository, make the required changes, run focused checks, read every tool result, and continue until the requested outcome is verified.
+- Treat each foreground command result (stdout, stderr, exit code, timeout, and cwd) as an observation. Diagnose failures, fix the cause, and run the relevant command again.
+- Use bash_run only for finite commands. For servers, watchers, log tails, or any process that may not exit, use bash_background, then inspect it with bash_logs; never block the loop waiting forever.
+- Prefer small, source-level fixes. Read files before editing and preserve existing security and workspace boundaries.
+- Do not stop after announcing the next action. Execute it. Stop only when the task is complete, blocked by missing user information, or a security guard refuses the operation.`,
   },
 ] as const;
 

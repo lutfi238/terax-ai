@@ -1,3 +1,4 @@
+import type { ApprovalPolicy } from "../lib/agents";
 import { buildManagedAgentTools } from "./agent";
 import { buildEditTools } from "./edit";
 import { buildFsTools } from "./fs";
@@ -28,16 +29,20 @@ export { resolvePath, type ToolContext } from "./context";
  * active terminal's cwd (provided via `getCwd`); it should not invent paths
  * outside that.
  */
-export function buildTools(ctx: import("./context").ToolContext) {
+export function buildTools(
+  ctx: import("./context").ToolContext,
+  approvalPolicy: ApprovalPolicy = "review",
+) {
+  const requiresApproval = approvalPolicy === "review";
   return {
-    ...buildFsTools(ctx),
-    ...buildEditTools(ctx),
+    ...buildFsTools(ctx, requiresApproval),
+    ...buildEditTools(ctx, requiresApproval),
     ...buildSearchTools(ctx),
-    ...buildShellTools(ctx),
+    ...buildShellTools(ctx, requiresApproval),
     ...buildSubagentTools(ctx),
     ...buildTerminalTools(ctx),
     ...buildTodoTools(ctx),
-    ...buildManagedAgentTools(ctx),
+    ...buildManagedAgentTools(ctx, requiresApproval),
   } as const;
 }
 

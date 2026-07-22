@@ -1,16 +1,19 @@
 import type { UIMessage } from "@ai-sdk/react";
 import type { CustomEndpoint } from "../config";
-import { runAgentStream, type AgentUsageDelta } from "./agent";
-import type { ProviderKeys, CustomEndpointKeys } from "./keyring";
-import { formatAiError } from "./errors";
-import { native } from "./native";
 import type { ToolContext } from "../tools/tools";
+import { type AgentUsageDelta, runAgentStream } from "./agent";
+import { type ApprovalPolicy, approvalPolicyForRun } from "./agents";
+import { formatAiError } from "./errors";
+import type { CustomEndpointKeys, ProviderKeys } from "./keyring";
+import { native } from "./native";
 
 const TERAX_MD_MAX_BYTES = 32 * 1024;
 type MemoryCacheEntry = { content: string | null; mtime: number };
 const projectMemoryCache = new Map<string, MemoryCacheEntry>();
 
-async function readTeraxMd(workspaceRoot: string | null): Promise<string | null> {
+async function readTeraxMd(
+  workspaceRoot: string | null,
+): Promise<string | null> {
   if (!workspaceRoot) return null;
   const path = `${workspaceRoot.replace(/\/$/, "")}/TERAX.md`;
   const cached = projectMemoryCache.get(workspaceRoot);
@@ -18,7 +21,10 @@ async function readTeraxMd(workspaceRoot: string | null): Promise<string | null>
   try {
     const r = await native.readFile(path);
     if (r.kind !== "text") {
-      projectMemoryCache.set(workspaceRoot, { content: null, mtime: Date.now() });
+      projectMemoryCache.set(workspaceRoot, {
+        content: null,
+        mtime: Date.now(),
+      });
       return null;
     }
     const content =
@@ -40,12 +46,59 @@ type LiveSnapshot = {
   activeFile: string | null;
 };
 
+type AgentPersona = { id: string; name: string; instructions: string };
+export type AgentRunSnapshot = {
+  userMessageId: string | null;
+  persona: AgentPersona;
+  approvalPolicy: ApprovalPolicy;
+  planMode: boolean;
+};
+
+export function resolveAgentRunSnapshot(
+  messages: readonly UIMessage[],
+  selectedPersona: AgentPersona,
+  selectedPlanMode: boolean,
+  snapshots: ReadonlyMap<string, AgentRunSnapshot>,
+): AgentRunSnapshot {
+  let lastUserId = "";
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role === "user") {
+      lastUserId = message.id;
+      break;
+    }
+  }
+  let matchingUserIds = 0;
+  if (lastUserId) {
+    for (const message of messages) {
+      if (message.role === "user" && message.id === lastUserId)
+        matchingUserIds++;
+    }
+  }
+  const validUserMessageId =
+    lastUserId && matchingUserIds === 1 ? lastUserId : null;
+  if (validUserMessageId) {
+    const existing = snapshots.get(validUserMessageId);
+    if (existing) return existing;
+  }
+  const isNewUserTurn = messages[messages.length - 1]?.role === "user";
+  return {
+    userMessageId: validUserMessageId,
+    persona: selectedPersona,
+    approvalPolicy:
+      validUserMessageId && isNewUserTurn
+        ? approvalPolicyForRun(selectedPersona.id, selectedPlanMode)
+        : "review",
+    planMode: Boolean(validUserMessageId && isNewUserTurn && selectedPlanMode),
+  };
+}
+
 type Deps = {
   getKeys: () => ProviderKeys;
   toolContext: ToolContext;
   getModelId: () => string;
   getCustomInstructions: () => string;
-  getAgentPersona: () => { name: string; instructions: string } | null;
+  getAgentPersona: () => AgentPersona;
   getLive: () => LiveSnapshot;
   getLmstudioBaseURL?: () => string | undefined;
   getLmstudioModelId?: () => string | undefined;
@@ -73,7 +126,24 @@ type SendOptions = {
 };
 
 export function createContextAwareTransport(deps: Deps) {
+  const snapshots = new Map<string, AgentRunSnapshot>();
   const run = async (options: SendOptions) => {
+    const runSnapshot = resolveAgentRunSnapshot(
+      options.messages,
+      deps.getAgentPersona(),
+      deps.getPlanMode?.() ?? false,
+      snapshots,
+    );
+    if (
+      runSnapshot.userMessageId &&
+      !snapshots.has(runSnapshot.userMessageId)
+    ) {
+      snapshots.set(runSnapshot.userMessageId, runSnapshot);
+      if (snapshots.size > 32) {
+        const oldest = snapshots.keys().next().value;
+        if (oldest) snapshots.delete(oldest);
+      }
+    }
     const live = deps.getLive();
     const projectMemory = await readTeraxMd(live.workspaceRoot);
     const envBlock = formatEnvBlock(live);
@@ -84,7 +154,8 @@ export function createContextAwareTransport(deps: Deps) {
       keys: deps.getKeys(),
       modelId: deps.getModelId(),
       customInstructions: deps.getCustomInstructions(),
-      agentPersona: deps.getAgentPersona(),
+      agentPersona: runSnapshot.persona,
+      approvalPolicy: runSnapshot.approvalPolicy,
       toolContext: deps.toolContext,
       onStep: deps.onStep,
       onUsage: deps.onUsage,
@@ -102,7 +173,7 @@ export function createContextAwareTransport(deps: Deps) {
       openrouterModelId: deps.getOpenrouterModelId?.(),
       customEndpoints: deps.getCustomEndpoints?.(),
       customEndpointKeys: deps.getCustomEndpointKeys?.(),
-      planMode: deps.getPlanMode?.(),
+      planMode: runSnapshot.planMode,
       projectMemory,
       uiMessages: messagesForRun,
       abortSignal: options.abortSignal,

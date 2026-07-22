@@ -17,7 +17,7 @@ function djb2(s: string): number {
   return h >>> 0;
 }
 
-export function buildFsTools(ctx: ToolContext) {
+export function buildFsTools(ctx: ToolContext, requiresApproval = true) {
   return {
     read_file: tool({
       description:
@@ -148,13 +148,12 @@ export function buildFsTools(ctx: ToolContext) {
     }),
 
     write_file: tool({
-      description:
-        "Create or overwrite a file with the given content. Asks the user before running. Prefer `edit` / `multi_edit` for in-place changes. Only use `write_file` for creating a brand-new file or fully replacing a tiny one.",
+      description: `Create or overwrite a file with the given content. ${requiresApproval ? "Asks the user before running." : "Runs automatically in autonomous mode."} Prefer \`edit\` / \`multi_edit\` for in-place changes. Only use \`write_file\` for creating a brand-new file or fully replacing a tiny one.`,
       inputSchema: z.object({
         path: z.string(),
         content: z.string(),
       }),
-      needsApproval: true,
+      needsApproval: requiresApproval,
       execute: async ({ path, content }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
         const safety = await checkWritableCanonical(
@@ -199,12 +198,11 @@ export function buildFsTools(ctx: ToolContext) {
     }),
 
     create_directory: tool({
-      description:
-        "Create a directory and any missing parents. Asks the user before running.",
+      description: `Create a directory and any missing parents. ${requiresApproval ? "Asks the user before running." : "Runs automatically in autonomous mode."}`,
       inputSchema: z.object({
         path: z.string(),
       }),
-      needsApproval: true,
+      needsApproval: requiresApproval,
       execute: async ({ path }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
         const safety = await checkWritableCanonical(

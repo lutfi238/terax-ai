@@ -1,9 +1,9 @@
+import { currentWorkspaceEnv, workspaceScopeKey } from "@/modules/workspace";
 import { tool } from "ai";
 import { z } from "zod";
 import { native } from "../lib/native";
 import { checkShellCommand } from "../lib/security";
 import type { ToolContext } from "./context";
-import { currentWorkspaceEnv, workspaceScopeKey } from "@/modules/workspace";
 
 /**
  * Per-session lazy shell-session id. The agent gets one persistent shell per
@@ -27,16 +27,15 @@ function workspaceSessionKey(sessionId: string): string {
   return `${sessionId}:${workspaceScopeKey(currentWorkspaceEnv())}`;
 }
 
-export function buildShellTools(ctx: ToolContext) {
+export function buildShellTools(ctx: ToolContext, requiresApproval = true) {
   return {
     bash_run: tool({
-      description:
-        "Run a foreground shell command in this session's persistent agent shell. cwd persists across calls, so `cd foo` then `bash_run pwd` works. Use for short-lived commands like lint, test, search, or build. For long-running or daemon processes, use `bash_background`. NEVER invoke interactive tools like vim, less, or top. They will hang. Asks for user approval before running.",
+      description: `Run a foreground shell command in this session's persistent agent shell. cwd persists across calls, so \`cd foo\` then \`bash_run pwd\` works. Use for short-lived commands like lint, test, search, or build. The completed command returns stdout, stderr, exit code, timeout state, and cwd so the agent can inspect the result and continue. For long-running or daemon processes, use \`bash_background\`. NEVER invoke interactive tools like vim, less, or top. They will hang. ${requiresApproval ? "Asks for user approval before running." : "Runs automatically in autonomous mode."}`,
       inputSchema: z.object({
         command: z.string(),
         timeout_secs: z.number().int().min(1).max(300).optional(),
       }),
-      needsApproval: true,
+      needsApproval: requiresApproval,
       execute: async ({ command, timeout_secs }) => {
         const safety = checkShellCommand(command);
         if (!safety.ok) return { error: safety.reason };
@@ -67,13 +66,12 @@ export function buildShellTools(ctx: ToolContext) {
     }),
 
     bash_background: tool({
-      description:
-        "Spawn a long-running background process (e.g. `pnpm dev`, `cargo watch`, log tailers). Returns a handle; use `bash_logs` to read its output and `bash_kill` to stop it. Output is captured into a 4MB ring buffer. Asks for user approval before running.",
+      description: `Spawn a long-running background process (e.g. \`pnpm dev\`, \`cargo watch\`, log tailers). Returns immediately with a handle; use \`bash_logs\` to inspect output and \`bash_kill\` to stop it. Output is captured into a 4MB ring buffer. ${requiresApproval ? "Asks for user approval before running." : "Runs automatically in autonomous mode."}`,
       inputSchema: z.object({
         command: z.string(),
         cwd: z.string().nullable().optional(),
       }),
-      needsApproval: true,
+      needsApproval: requiresApproval,
       execute: async ({ command, cwd }) => {
         const safety = checkShellCommand(command);
         if (!safety.ok) return { error: safety.reason };
@@ -117,11 +115,10 @@ export function buildShellTools(ctx: ToolContext) {
         }
       },
     }),
-
     bash_kill: tool({
-      description:
-        "Terminate a `bash_background` process by handle. Idempotent. Kills nothing if the handle is unknown or already exited.",
+      description: `Terminate a \`bash_background\` process by handle. Idempotent. Kills nothing if the handle is unknown or already exited. ${requiresApproval ? "Asks for user approval before running." : "Runs automatically in autonomous mode."}`,
       inputSchema: z.object({ handle: z.number().int() }),
+      needsApproval: requiresApproval,
       execute: async ({ handle }) => {
         try {
           await native.shellBgKill(handle);

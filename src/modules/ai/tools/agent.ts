@@ -22,11 +22,13 @@ function tailLines(text: string, n: number): string {
   return parts.length <= n ? text : parts.slice(parts.length - n).join("\n");
 }
 
-export function buildManagedAgentTools(ctx: ToolContext) {
+export function buildManagedAgentTools(
+  ctx: ToolContext,
+  requiresApproval = true,
+) {
   return {
     spawn_coding_agent: tool({
-      description:
-        "Spawn a Claude Code agent in a new terminal tab and give it the prompt. Use this when the user (via /claude-code) wants work delegated and no agent is active yet in this session. Craft a complete, self-contained prompt first; the user approves it before the agent starts. Do not call this if an agent is already active — use send_to_agent instead.",
+      description: `Spawn a Claude Code agent in a new terminal tab and give it the prompt. Use this when the user (via /claude-code) wants work delegated and no agent is active yet in this session. Craft a complete, self-contained prompt first. ${requiresApproval ? "The user approves it before the agent starts." : "It starts automatically in autonomous mode."} Do not call this if an agent is already active — use send_to_agent instead.`,
       inputSchema: z.object({
         prompt: z
           .string()
@@ -35,7 +37,7 @@ export function buildManagedAgentTools(ctx: ToolContext) {
             "The full, self-contained task prompt for the Claude Code agent.",
           ),
       }),
-      needsApproval: true,
+      needsApproval: requiresApproval,
       execute: async ({ prompt }) => {
         const sessionId = ctx.getSessionId();
         if (!sessionId) return { error: "no active chat session" };
@@ -57,8 +59,7 @@ export function buildManagedAgentTools(ctx: ToolContext) {
     }),
 
     send_to_agent: tool({
-      description:
-        "Send a follow-up instruction to the active Claude Code agent in this session. Use after reviewing its output to request fixes or the next unit of work. The instruction is typed into the agent's prompt and submitted once the user approves. Read its latest output first so the follow-up is informed.",
+      description: `Send a follow-up instruction to the active Claude Code agent in this session. Use after reviewing its output to request fixes or the next unit of work. The instruction is typed into the agent's prompt and ${requiresApproval ? "submitted once the user approves." : "submitted automatically in autonomous mode."} Read its latest output first so the follow-up is informed.`,
       inputSchema: z.object({
         instruction: z
           .string()
@@ -67,7 +68,7 @@ export function buildManagedAgentTools(ctx: ToolContext) {
             "One clear, self-contained instruction for the agent. No control characters.",
           ),
       }),
-      needsApproval: true,
+      needsApproval: requiresApproval,
       execute: async ({ instruction }) => {
         const sessionId = ctx.getSessionId();
         const store = useManagedAgentsStore.getState();
@@ -89,7 +90,11 @@ export function buildManagedAgentTools(ctx: ToolContext) {
         }
         setTimeout(() => writeToSession(managed.leafId, "\r"), SUBMIT_DELAY_MS);
         store.bumpRound(managed.leafId);
-        return { ok: true, sent: oneLine, round: store.get(managed.leafId)?.rounds };
+        return {
+          ok: true,
+          sent: oneLine,
+          round: store.get(managed.leafId)?.rounds,
+        };
       },
     }),
 
@@ -103,7 +108,9 @@ export function buildManagedAgentTools(ctx: ToolContext) {
           .min(1)
           .max(400)
           .optional()
-          .describe("Trailing lines of the agent terminal to return. Default 120."),
+          .describe(
+            "Trailing lines of the agent terminal to return. Default 120.",
+          ),
       }),
       execute: async ({ lines }) => {
         const sessionId = ctx.getSessionId();
