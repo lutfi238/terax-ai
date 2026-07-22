@@ -348,11 +348,9 @@ function ContextIndicator({ messages }: { messages: UIMessage[] }) {
   const estimated = useMemo(() => estimateTokens(messages), [messages]);
   const used = lastInput > 0 ? lastInput : estimated;
   const reported = tokens.inputTokens + tokens.outputTokens;
-  const { customEndpoints, openaiCompatibleContextLimit } = usePreferencesStore(
-    (s) => ({
-      customEndpoints: s.customEndpoints,
-      openaiCompatibleContextLimit: s.openaiCompatibleContextLimit,
-    }),
+  const customEndpoints = usePreferencesStore((s) => s.customEndpoints);
+  const openaiCompatibleContextLimit = usePreferencesStore(
+    (s) => s.openaiCompatibleContextLimit,
   );
   const modelDetails = useMemo(
     () =>
