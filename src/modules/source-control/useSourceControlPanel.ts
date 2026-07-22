@@ -6,7 +6,11 @@ import {
   type GitStatusSnapshot,
 } from "@/modules/ai/lib/native";
 import { useChatStore } from "@/modules/ai/store/chatStore";
-import { getModel, providerNeedsKey } from "@/modules/ai/config";
+import {
+  modelSupportsTemperature,
+  providerNeedsKey,
+  resolveModel,
+} from "@/modules/ai/config";
 import {
   invalidateDiff,
   invalidateRepoDiffs,
@@ -15,6 +19,7 @@ import {
 import { usePreferencesStore } from "@/modules/settings/preferences";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SourceControlSummary } from "./useSourceControl";
+import { buildCommitModelConfig } from "./commitModelConfig";
 
 type PanelState = "closed" | "loading" | "no-repo" | "ready" | "error";
 type DiffMode = "+" | "-";
@@ -258,7 +263,8 @@ function optimisticStage(
     if (!paths.has(file.path)) return file;
     if (file.staged && !file.unstaged) return file;
     changed = true;
-    const wt = file.worktreeStatus !== " " ? file.worktreeStatus : file.indexStatus;
+    const wt =
+      file.worktreeStatus !== " " ? file.worktreeStatus : file.indexStatus;
     return {
       ...file,
       indexStatus: wt,
@@ -288,7 +294,8 @@ function optimisticUnstage(
       continue;
     }
     changed = true;
-    const idx = file.indexStatus !== " " ? file.indexStatus : file.worktreeStatus;
+    const idx =
+      file.indexStatus !== " " ? file.indexStatus : file.worktreeStatus;
     if (idx === "R" && file.originalPath) {
       next.push({
         path: file.originalPath,
@@ -369,7 +376,7 @@ export function useSourceControlPanel(
   const selectedModelId = useChatStore((state) => state.selectedModelId);
   const agentStatus = useChatStore((state) => state.agentMeta.status);
   const hasApiKeyForSelected = useChatStore((state) => {
-    const model = getModel(state.selectedModelId);
+    const model = resolveModel(state.selectedModelId);
     return !providerNeedsKey(model.provider) || !!state.apiKeys[model.provider];
   });
   const lmstudioModelId = usePreferencesStore((state) => state.lmstudioModelId);
@@ -380,6 +387,9 @@ export function useSourceControlPanel(
   );
   const openaiCompatibleModelId = usePreferencesStore(
     (state) => state.openaiCompatibleModelId,
+  );
+  const openrouterModelId = usePreferencesStore(
+    (state) => state.openrouterModelId,
   );
   const [panelState, setPanelState] = useState<PanelState>("closed");
   const [repo, setRepo] = useState<GitRepoInfo | null>(null);
@@ -459,7 +469,11 @@ export function useSourceControlPanel(
 
   const allClean = stagedEntries.length === 0 && unstagedEntries.length === 0;
   const canPush = !!status?.upstream && status.behind === 0;
-  const selectedModel = getModel(selectedModelId);
+  const selectedModel = resolveModel(selectedModelId);
+  const selectedModelSupportsTemperature = modelSupportsTemperature(
+    selectedModel.provider,
+    selectedModel.id,
+  );
   const aiBusy = agentStatus !== "idle" && agentStatus !== "error";
   const anyActionBusy = localActionBusy !== null || summary.busyAction !== null;
   const aiUnavailableReason = useMemo(() => {
@@ -484,6 +498,9 @@ export function useSourceControlPanel(
     ) {
       return "Connect an AI provider to generate commit messages";
     }
+    if (selectedModel.id === "openrouter-custom" && !openrouterModelId.trim()) {
+      return "Connect an AI provider to generate commit messages";
+    }
     return null;
   }, [
     hasApiKeyForSelected,
@@ -492,6 +509,7 @@ export function useSourceControlPanel(
     ollamaModelId,
     openaiCompatibleBaseURL,
     openaiCompatibleModelId,
+    openrouterModelId,
     selectedModel,
     stagedEntries.length,
   ]);
@@ -536,7 +554,11 @@ export function useSourceControlPanel(
   useEffect(() => () => cancelReconcile(), [cancelReconcile]);
 
   const openSelection = useCallback(
-    (sel: DiffSelection, repoRoot: string, file: GitChangedFile | undefined) => {
+    (
+      sel: DiffSelection,
+      repoRoot: string,
+      file: GitChangedFile | undefined,
+    ) => {
       onOpenDiff?.({
         path: sel.path,
         repoRoot,
@@ -634,7 +656,10 @@ export function useSourceControlPanel(
   const selectEntry = useCallback(
     async (entry: SourceControlEntry) => {
       if (!repo) return;
-      const nextSelection: DiffSelection = { path: entry.path, mode: entry.mode };
+      const nextSelection: DiffSelection = {
+        path: entry.path,
+        mode: entry.mode,
+      };
       if (sameSelection(selected, nextSelection)) {
         setActionError(null);
         setActionMessage(null);
@@ -866,23 +891,14 @@ export function useSourceControlPanel(
       const model = await buildConfiguredLanguageModel(
         selectedModelId,
         chatState.apiKeys,
-        {
-          lmstudioBaseURL: prefs.lmstudioBaseURL,
-          lmstudioModelId,
-          mlxBaseURL: prefs.mlxBaseURL,
-          mlxModelId,
-          ollamaBaseURL: prefs.ollamaBaseURL,
-          ollamaModelId,
-          openaiCompatibleBaseURL,
-          openaiCompatibleModelId,
-        },
+        buildCommitModelConfig(prefs, chatState.customEndpointKeys),
       );
       const result = await generateText({
         model,
         system: COMMIT_MESSAGE_SYSTEM_PROMPT,
         prompt: buildCommitMessagePrompt(stagedEntries, diffText, truncated),
         maxOutputTokens: COMMIT_MESSAGE_MAX_OUTPUT_TOKENS,
-        temperature: 0.2,
+        ...(selectedModelSupportsTemperature ? { temperature: 0.2 } : {}),
       });
       let message = cleanCommitMessage(result.text);
       if (!isValidCommitMessage(message)) {
@@ -891,7 +907,7 @@ export function useSourceControlPanel(
           system: COMMIT_MESSAGE_SYSTEM_PROMPT,
           prompt: buildRepairCommitMessagePrompt(message, stagedEntries),
           maxOutputTokens: COMMIT_MESSAGE_MAX_OUTPUT_TOKENS,
-          temperature: 0,
+          ...(selectedModelSupportsTemperature ? { temperature: 0 } : {}),
         });
         message = cleanCommitMessage(repair.text);
       }
@@ -915,8 +931,10 @@ export function useSourceControlPanel(
     ollamaModelId,
     openaiCompatibleBaseURL,
     openaiCompatibleModelId,
+    openrouterModelId,
     repo,
     selectedModelId,
+    selectedModelSupportsTemperature,
     stagedEntries,
   ]);
 
