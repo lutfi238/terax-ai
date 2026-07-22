@@ -120,7 +120,7 @@ export function buildEditTools(ctx: ToolContext) {
   return {
     edit: tool({
       description:
-        "Replace an exact string in a file. Requires read_file on this path first in the current session. This prevents blind edits. `old_string` must be unique in the file unless replace_all: true. Asks for user approval before writing unless edit auto approval is enabled.",
+        "Replace an exact string in a file. Requires read_file on this path first in the current session. This prevents blind edits. `old_string` must be unique in the file unless replace_all: true. Asks for user approval before writing.",
       inputSchema: z.object({
         path: z.string(),
         old_string: z
@@ -131,7 +131,7 @@ export function buildEditTools(ctx: ToolContext) {
         new_string: z.string().describe("Replacement substring."),
         replace_all: z.boolean().optional(),
       }),
-      needsApproval: () => !ctx.getAutoApprove().edit,
+      needsApproval: true,
       execute: async ({ path, old_string, new_string, replace_all }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
         const safety = await checkWritableCanonical(
@@ -158,7 +158,7 @@ export function buildEditTools(ctx: ToolContext) {
 
     multi_edit: tool({
       description:
-        "Apply several exact-string replacements to a single file atomically. Each edit is applied in order to the running buffer; if any edit's old_string is missing or non-unique, the whole batch aborts before writing. Requires prior read_file on the path. Asks for user approval before writing unless edit auto approval is enabled.",
+        "Apply several exact-string replacements to a single file atomically. Each edit is applied in order to the running buffer; if any edit's old_string is missing or non-unique, the whole batch aborts before writing. Requires prior read_file on the path and user approval before writing.",
       inputSchema: z.object({
         path: z.string(),
         edits: z
@@ -171,7 +171,7 @@ export function buildEditTools(ctx: ToolContext) {
           )
           .min(1),
       }),
-      needsApproval: () => !ctx.getAutoApprove().edit,
+      needsApproval: true,
       execute: async ({ path, edits }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
         const safety = await checkWritableCanonical(

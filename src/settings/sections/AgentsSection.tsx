@@ -1,14 +1,3 @@
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,7 +7,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { AGENT_ICONS } from "@/modules/ai/components/AgentSwitcher";
@@ -38,21 +26,13 @@ import {
   useSnippetsStore,
 } from "@/modules/ai/store/snippetsStore";
 import { usePreferencesStore } from "@/modules/settings/preferences";
-import {
-  setAiAutoApproveKey,
-  setCustomInstructions,
-  type AiAutoApproveSettings,
-} from "@/modules/settings/store";
+import { setCustomInstructions } from "@/modules/settings/store";
 import {
   Add01Icon,
   CheckmarkCircle02Icon,
   Delete02Icon,
   Edit02Icon,
-  FolderAddIcon,
-  FileEditIcon,
-  FilePlusIcon,
   SparklesIcon,
-  TerminalIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useRef, useState } from "react";
@@ -67,67 +47,8 @@ const ICON_OPTIONS: AgentIconId[] = [
   "spark",
 ];
 
-type AutoApproveKey = keyof AiAutoApproveSettings;
-
-type AutoApproveItem = {
-  key: AutoApproveKey;
-  title: string;
-  description: string;
-  warning: string;
-  icon: typeof SparklesIcon;
-};
-
-const AUTO_APPROVE_ITEMS: AutoApproveItem[] = [
-  {
-    key: "writeFile",
-    title: "Write files",
-    description:
-      "Allow the agent to create or fully overwrite files without a per-action approval.",
-    warning:
-      "The agent can create new files or replace entire file contents immediately. Secret path guards still apply, but incorrect model output can overwrite important project files.",
-    icon: FilePlusIcon,
-  },
-  {
-    key: "edit",
-    title: "Edit files",
-    description:
-      "Allow exact-string edits and multi-edits without a per-action approval.",
-    warning:
-      "The agent can modify existing files immediately after reading them. Read-before-edit and path guards still apply, but you will not review each diff before it is written.",
-    icon: FileEditIcon,
-  },
-  {
-    key: "createDirectory",
-    title: "Create directories",
-    description:
-      "Allow the agent to create folders and missing parent folders automatically.",
-    warning:
-      "The agent can create directory trees in writable project locations without stopping for confirmation.",
-    icon: FolderAddIcon,
-  },
-  {
-    key: "bashRun",
-    title: "Run shell commands",
-    description:
-      "Allow short foreground commands such as tests, builds, and searches to run automatically.",
-    warning:
-      "The agent can run foreground shell commands without approval. The destructive-command guard still blocks obvious dangerous commands, but commands may change files, install packages, use network, or expose local data in output.",
-    icon: TerminalIcon,
-  },
-  {
-    key: "bashBackground",
-    title: "Spawn background processes",
-    description:
-      "Allow long-running commands such as dev servers or watchers to start automatically.",
-    warning:
-      "The agent can start long-running background processes without approval. These processes may keep running, consume CPU or memory, bind local ports, and write logs until stopped.",
-    icon: TerminalIcon,
-  },
-];
-
 export function AgentsSection() {
   const customInstructions = usePreferencesStore((s) => s.customInstructions);
-  const aiAutoApprove = usePreferencesStore((s) => s.aiAutoApprove);
   const customAgents = useAgentsStore((s) => s.customAgents);
   const activeAgentId = useAgentsStore((s) => s.activeId);
   const setActiveAgentId = useAgentsStore((s) => s.setActiveId);
@@ -156,8 +77,6 @@ export function AgentsSection() {
       />
 
       <CustomInstructionsBlock value={customInstructions} />
-
-      <AutoApproveBlock value={aiAutoApprove} />
 
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
@@ -302,115 +221,6 @@ export function AgentsSection() {
         }}
       />
     </div>
-  );
-}
-
-function AutoApproveBlock({ value }: { value: AiAutoApproveSettings }) {
-  const [pending, setPending] = useState<AutoApproveItem | null>(null);
-
-  const enabledCount = AUTO_APPROVE_ITEMS.filter(
-    (item) => value[item.key],
-  ).length;
-
-  const onToggle = (item: AutoApproveItem, next: boolean) => {
-    if (!next) {
-      void setAiAutoApproveKey(item.key, false);
-      return;
-    }
-    setPending(item);
-  };
-
-  const confirm = () => {
-    if (!pending) return;
-    void setAiAutoApproveKey(pending.key, true);
-    setPending(null);
-  };
-
-  return (
-    <section className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex flex-col">
-          <Label>Auto approve</Label>
-          <span className="text-[10.5px] leading-relaxed text-muted-foreground">
-            Dangerous agent actions stay manual by default. Enable only what you
-            trust Terax to run without asking each time.
-          </span>
-        </div>
-        <Badge
-          variant={enabledCount > 0 ? "destructive" : "outline"}
-          className="shrink-0 text-[10px]"
-        >
-          {enabledCount === 0 ? "Off" : `${enabledCount} enabled`}
-        </Badge>
-      </div>
-
-      <div className="rounded-lg border border-border/60 bg-card/40 p-1.5">
-        <div className="flex flex-col gap-1.5">
-          {AUTO_APPROVE_ITEMS.map((item) => {
-            const Icon = item.icon;
-            return (
-              <div
-                key={item.key}
-                className="flex items-start justify-between gap-3 rounded-md px-2.5 py-2 hover:bg-muted/30"
-              >
-                <div className="flex min-w-0 gap-2.5">
-                  <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/50 text-muted-foreground">
-                    <HugeiconsIcon icon={Icon} size={13} strokeWidth={1.75} />
-                  </div>
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-[12.5px] font-medium">
-                      {item.title}
-                    </span>
-                    <span className="text-[10.5px] leading-relaxed text-muted-foreground">
-                      {item.description}
-                    </span>
-                  </div>
-                </div>
-                <Switch
-                  checked={value[item.key]}
-                  onCheckedChange={(next) => onToggle(item, next)}
-                />
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <AlertDialog
-        open={!!pending}
-        onOpenChange={(open) => !open && setPending(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Enable auto approval?</AlertDialogTitle>
-            <AlertDialogDescription className="flex flex-col gap-3 text-left">
-              <span>
-                You are about to enable auto approval for{" "}
-                <strong className="font-medium text-foreground">
-                  {pending?.title}
-                </strong>
-                .
-              </span>
-              <span>{pending?.warning}</span>
-              <span>
-                Approval prompts, AI diff review, and per-command confirmation
-                will be skipped for this action type while it is enabled. You
-                can turn it off here at any time.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirm}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Enable Auto Approval
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </section>
   );
 }
 

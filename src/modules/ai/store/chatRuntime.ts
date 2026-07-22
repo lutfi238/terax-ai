@@ -34,7 +34,6 @@ function makeChat(sessionId: string): Chat<UIMessage> {
     readAgentOutput: (leafId) =>
       useChatStore.getState().live.readLeafBuffer(leafId),
     readCache,
-    getAutoApprove: () => usePreferencesStore.getState().aiAutoApprove,
     getSessionId: () => sessionId,
   };
 

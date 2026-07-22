@@ -149,12 +149,12 @@ export function buildFsTools(ctx: ToolContext) {
 
     write_file: tool({
       description:
-        "Create or overwrite a file with the given content. Asks the user before running unless write-file auto approval is enabled. Prefer `edit` / `multi_edit` for in-place changes. Only use `write_file` for creating a brand-new file or fully replacing a tiny one.",
+        "Create or overwrite a file with the given content. Asks the user before running. Prefer `edit` / `multi_edit` for in-place changes. Only use `write_file` for creating a brand-new file or fully replacing a tiny one.",
       inputSchema: z.object({
         path: z.string(),
         content: z.string(),
       }),
-      needsApproval: () => !ctx.getAutoApprove().writeFile,
+      needsApproval: true,
       execute: async ({ path, content }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
         const safety = await checkWritableCanonical(
@@ -200,11 +200,11 @@ export function buildFsTools(ctx: ToolContext) {
 
     create_directory: tool({
       description:
-        "Create a directory and any missing parents. Asks the user before running unless directory auto approval is enabled.",
+        "Create a directory and any missing parents. Asks the user before running.",
       inputSchema: z.object({
         path: z.string(),
       }),
-      needsApproval: () => !ctx.getAutoApprove().createDirectory,
+      needsApproval: true,
       execute: async ({ path }) => {
         const reqPath = resolvePath(path, ctx.getCwd());
         const safety = await checkWritableCanonical(

@@ -112,14 +112,6 @@ export const EDITOR_THEME_LABELS: Record<EditorThemeId, string> = {
   "xcode-light": "Xcode Light",
 };
 
-export type AiAutoApproveSettings = {
-  writeFile: boolean;
-  edit: boolean;
-  createDirectory: boolean;
-  bashRun: boolean;
-  bashBackground: boolean;
-};
-
 export type Preferences = {
   theme: ThemePref;
   themeId: string;
@@ -168,7 +160,6 @@ export type Preferences = {
   lastWslDistro: string | null;
   zoomLevel: number;
   agentNotifications: boolean;
-  aiAutoApprove: AiAutoApproveSettings;
   defaultWorkspaceEnv: string;
   commitMessageLanguage: CommitLanguage;
   shortcuts: Record<ShortcutId, KeyBinding[]>;
@@ -259,7 +250,6 @@ const KEY_TERMINAL_SCROLLBACK = "terminalScrollback";
 const KEY_LAST_WSL_DISTRO = "lastWslDistro";
 const KEY_ZOOM_LEVEL = "zoomLevel";
 const KEY_AGENT_NOTIFICATIONS = "agentNotifications";
-const KEY_AI_AUTO_APPROVE = "aiAutoApprove";
 const KEY_DEFAULT_WORKSPACE_ENV = "defaultWorkspaceEnv";
 const KEY_COMMIT_MESSAGE_LANGUAGE = "commitMessageLanguage";
 const KEY_SHORTCUTS = "shortcuts";
@@ -293,14 +283,6 @@ export const TERMINAL_SCROLLBACK_MAX = 50_000;
 export const TERMINAL_SCROLLBACK_PRESETS = [
   500, 1000, 2000, 5000, 10_000, 25_000,
 ] as const;
-
-export const DEFAULT_AI_AUTO_APPROVE: AiAutoApproveSettings = {
-  writeFile: false,
-  edit: false,
-  createDirectory: false,
-  bashRun: false,
-  bashBackground: false,
-};
 
 export const DEFAULT_PREFERENCES: Preferences = {
   theme: "system",
@@ -350,7 +332,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
   lastWslDistro: null,
   zoomLevel: 1.0,
   agentNotifications: true,
-  aiAutoApprove: DEFAULT_AI_AUTO_APPROVE,
   defaultWorkspaceEnv: "local",
   commitMessageLanguage: "Auto",
   shortcuts: {} as Record<ShortcutId, KeyBinding[]>,
@@ -365,20 +346,6 @@ export const DEFAULT_PREFERENCES: Preferences = {
 };
 
 const store = new LazyStore(STORE_PATH, { defaults: {}, autoSave: 200 });
-
-function normalizeAiAutoApprove(value: unknown): AiAutoApproveSettings {
-  const raw =
-    value && typeof value === "object"
-      ? (value as Partial<Record<keyof AiAutoApproveSettings, unknown>>)
-      : {};
-  return {
-    writeFile: raw.writeFile === true,
-    edit: raw.edit === true,
-    createDirectory: raw.createDirectory === true,
-    bashRun: raw.bashRun === true,
-    bashBackground: raw.bashBackground === true,
-  };
-}
 
 // LazyStore.onChange only fires within the writing process. The settings
 // page lives in a separate webview, so writes there never reach the main
@@ -533,7 +500,6 @@ export async function loadPreferences(): Promise<Preferences> {
     agentNotifications:
       get<boolean>(KEY_AGENT_NOTIFICATIONS) ??
       DEFAULT_PREFERENCES.agentNotifications,
-    aiAutoApprove: normalizeAiAutoApprove(get(KEY_AI_AUTO_APPROVE)),
     defaultWorkspaceEnv:
       get<string>(KEY_DEFAULT_WORKSPACE_ENV) ??
       DEFAULT_PREFERENCES.defaultWorkspaceEnv,
@@ -877,20 +843,6 @@ export async function setAgentNotifications(value: boolean): Promise<void> {
   await writePref(KEY_AGENT_NOTIFICATIONS, value);
 }
 
-export async function setAiAutoApprove(
-  value: AiAutoApproveSettings,
-): Promise<void> {
-  await writePref(KEY_AI_AUTO_APPROVE, normalizeAiAutoApprove(value));
-}
-
-export async function setAiAutoApproveKey(
-  key: keyof AiAutoApproveSettings,
-  value: boolean,
-): Promise<void> {
-  const current = normalizeAiAutoApprove(await store.get(KEY_AI_AUTO_APPROVE));
-  await setAiAutoApprove({ ...current, [key]: value });
-}
-
 export async function setDefaultWorkspaceEnv(value: string): Promise<void> {
   await writePref(KEY_DEFAULT_WORKSPACE_ENV, value);
 }
@@ -965,7 +917,6 @@ export async function onPreferencesChange(
     [KEY_LAST_WSL_DISTRO]: "lastWslDistro",
     [KEY_ZOOM_LEVEL]: "zoomLevel",
     [KEY_AGENT_NOTIFICATIONS]: "agentNotifications",
-    [KEY_AI_AUTO_APPROVE]: "aiAutoApprove",
     [KEY_DEFAULT_WORKSPACE_ENV]: "defaultWorkspaceEnv",
     [KEY_COMMIT_MESSAGE_LANGUAGE]: "commitMessageLanguage",
     [KEY_SHORTCUTS]: "shortcuts",

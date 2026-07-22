@@ -30,13 +30,6 @@ function makeContext(): ToolContext {
     spawnAgent: () => null,
     readAgentOutput: () => null,
     readCache: new Map(),
-    getAutoApprove: () => ({
-      writeFile: false,
-      edit: false,
-      createDirectory: false,
-      bashRun: false,
-      bashBackground: false,
-    }),
     getSessionId: () => "session",
   };
 }

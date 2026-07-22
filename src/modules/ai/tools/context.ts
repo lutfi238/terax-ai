@@ -1,5 +1,3 @@
-import type { AiAutoApproveSettings } from "@/modules/settings/store";
-
 export type ToolContext = {
   /** Active terminal tab cwd, used to resolve relative paths. Null = home. */
   getCwd: () => string | null;
@@ -20,7 +18,6 @@ export type ToolContext = {
   /** Read the terminal scrollback tail of a managed agent's leaf. */
   readAgentOutput: (leafId: number) => string | null;
   readCache: Map<string, { size: number; hash: number }>;
-  getAutoApprove: () => AiAutoApproveSettings;
   /** Active chat session id used by tools that persist per-session state (todos). */
   getSessionId: () => string | null;
 };
