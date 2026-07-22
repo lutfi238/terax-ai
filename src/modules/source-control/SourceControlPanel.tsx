@@ -11,6 +11,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -48,6 +55,7 @@ import {
   COMPACT_ITEM,
 } from "@/modules/explorer/lib/menuItemClass";
 import { joinPath } from "@/modules/explorer/lib/useFileTree";
+import { setCommitMessageLanguage } from "@/modules/settings/store";
 import {
   AiContentGenerator02Icon,
   Alert02Icon,
@@ -76,6 +84,11 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import {
+  COMMIT_LANGUAGES,
+  CUSTOM_COMMIT_LANGUAGE,
+  type CommitLanguage,
+} from "./commitMessage";
 import type { SourceControlSummary } from "./useSourceControl";
 import {
   useSourceControlPanel,
@@ -779,9 +792,9 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                   onChange={(event) => scm.setCommitMessage(event.target.value)}
                   onKeyDown={handleCommitShortcut}
                   placeholder="Commit message"
-                  rows={3}
+                  rows={6}
                   className={cn(
-                    "min-h-[72px] border-border resize-none rounded-lg bg-transparent px-3 pb-7 pt-2.5 text-[12.5px] leading-snug shadow-none placeholder:text-muted-foreground/65 focus-visible:ring-0 focus:border-0",
+                    "min-h-[132px] border-border resize-y rounded-lg bg-transparent px-3 pb-7 pt-2.5 pr-9 text-[12.5px] leading-snug shadow-none placeholder:text-muted-foreground/65 focus-visible:ring-0 focus:border-0",
                   )}
                 />
                 <div className="pointer-events-none absolute inset-x-3 bottom-1.5 flex items-center justify-between p-1 gap-2 text-[10px] tabular-nums text-muted-foreground/55">
@@ -792,6 +805,46 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                       {commitShortcut} <p>to commit</p>
                     </span>
                   )}
+                </div>
+                <div className="absolute bottom-1 right-1">
+                  <Select
+                    value={scm.commitMessageLanguage}
+                    onValueChange={(value) => {
+                      if (value !== CUSTOM_COMMIT_LANGUAGE) {
+                        void setCommitMessageLanguage(value as CommitLanguage);
+                        return;
+                      }
+                      const custom = window.prompt("Commit message language");
+                      if (custom?.trim()) {
+                        void setCommitMessageLanguage(custom.trim());
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      size="sm"
+                      aria-label="Commit message language"
+                      className="h-6 max-w-30 border-0 bg-transparent px-1.5 text-[10px] text-muted-foreground shadow-none"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent align="end">
+                      {COMMIT_LANGUAGES.map((language) => (
+                        <SelectItem key={language} value={language}>
+                          {language}
+                        </SelectItem>
+                      ))}
+                      {!COMMIT_LANGUAGES.includes(
+                        scm.commitMessageLanguage as (typeof COMMIT_LANGUAGES)[number],
+                      ) ? (
+                        <SelectItem value={scm.commitMessageLanguage}>
+                          {scm.commitMessageLanguage}
+                        </SelectItem>
+                      ) : null}
+                      <SelectItem value={CUSTOM_COMMIT_LANGUAGE}>
+                        Custom...
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="absolute right-1 top-1">
                   <Tooltip>

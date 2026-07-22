@@ -20,6 +20,13 @@ import { usePreferencesStore } from "@/modules/settings/preferences";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SourceControlSummary } from "./useSourceControl";
 import { buildCommitModelConfig } from "./commitModelConfig";
+import {
+  buildCommitMessagePrompt,
+  buildRepairCommitMessagePrompt,
+  cleanCommitMessage,
+  isValidCommitMessage,
+} from "./commitMessage";
+import type { CommitLanguage } from "./commitMessage";
 
 type PanelState = "closed" | "loading" | "no-repo" | "ready" | "error";
 type DiffMode = "+" | "-";
@@ -28,10 +35,8 @@ type SelectionTransition = "none" | "moved-group" | "reset";
 const COMMIT_DIFF_CHAR_LIMIT = 60_000;
 const COMMIT_MESSAGE_MAX_OUTPUT_TOKENS = 1024;
 const RECONCILE_DEBOUNCE_MS = 180;
-const CONVENTIONAL_PREFIX =
-  /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?: .+/;
 const COMMIT_MESSAGE_SYSTEM_PROMPT =
-  "You write concise Conventional Commit subject lines in English. Return exactly one complete line, with no markdown, no quotes, no body, and no explanation.";
+  "You write accurate, detailed Conventional Commit messages. Return only the requested subject and bullet body without markdown fences or commentary.";
 
 export type DiffSelection = {
   path: string;
@@ -91,6 +96,7 @@ type SourceControlPanelState = {
   pushHint: string | null;
   canGenerateCommitMessage: boolean;
   generateCommitMessageHint: string;
+  commitMessageLanguage: CommitLanguage;
   selectionTransition: SelectionTransition;
   stagedEmptyText: string;
   unstagedEmptyText: string;
@@ -177,81 +183,11 @@ function sameSelection(
   return !!a && !!b && a.path === b.path && a.mode === b.mode;
 }
 
-function stagedFilesSummary(entries: SourceControlEntry[]): string {
-  return entries
-    .map((entry) => {
-      const status = entry.originalPath
-        ? `R ${entry.originalPath} -> ${entry.path}`
-        : `${entry.statusCode} ${entry.path}`;
-      return `- ${status}`;
-    })
-    .join("\n");
-}
-
 function truncateDiff(diff: string): { text: string; truncated: boolean } {
   if (diff.length <= COMMIT_DIFF_CHAR_LIMIT) {
     return { text: diff, truncated: false };
   }
   return { text: diff.slice(0, COMMIT_DIFF_CHAR_LIMIT), truncated: true };
-}
-
-function cleanCommitMessage(raw: string): string {
-  let text = raw.trim();
-  const fence = text.match(/^```[a-zA-Z0-9_-]*\n([\s\S]*?)\n```\s*$/);
-  if (fence) text = fence[1].trim();
-  const firstLine = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find(Boolean);
-  if (!firstLine) return "";
-  return firstLine.replace(/^["'`]+|["'`]+$/g, "").trim();
-}
-
-function isValidCommitMessage(message: string): boolean {
-  return CONVENTIONAL_PREFIX.test(message);
-}
-
-function buildCommitMessagePrompt(
-  entries: SourceControlEntry[],
-  diffText: string,
-  truncated: boolean,
-): string {
-  return [
-    "Generate one complete commit message for the staged changes only.",
-    "Format: type(scope): subject",
-    "Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.",
-    "Examples:",
-    "- feat(source-control): generate commit messages",
-    "- fix(git): handle staged diff errors",
-    "- chore: update project metadata",
-    "Use a short lowercase subject in imperative mood. Omit the scope if it would be vague.",
-    "Do not stop after the type or an opening parenthesis; the line must include a subject after ': '.",
-    truncated
-      ? "The diff below was truncated; infer from the visible staged changes only."
-      : "The full staged diff is included below.",
-    "",
-    "Staged files:",
-    stagedFilesSummary(entries),
-    "",
-    "Staged diff:",
-    diffText || "(No textual diff available.)",
-  ].join("\n");
-}
-
-function buildRepairCommitMessagePrompt(
-  invalidMessage: string,
-  entries: SourceControlEntry[],
-): string {
-  return [
-    "Repair this invalid Conventional Commit subject line.",
-    `Invalid line: ${invalidMessage || "(empty)"}`,
-    "Return exactly one complete valid line in this format: type(scope): subject",
-    "Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.",
-    "If the scope is unclear, omit it and use: type: subject",
-    "",
-    "Staged files:",
-    stagedFilesSummary(entries),
-  ].join("\n");
 }
 
 function optimisticStage(
@@ -390,6 +326,9 @@ export function useSourceControlPanel(
   );
   const openrouterModelId = usePreferencesStore(
     (state) => state.openrouterModelId,
+  );
+  const commitMessageLanguage = usePreferencesStore(
+    (state) => state.commitMessageLanguage,
   );
   const [panelState, setPanelState] = useState<PanelState>("closed");
   const [repo, setRepo] = useState<GitRepoInfo | null>(null);
@@ -879,12 +818,19 @@ export function useSourceControlPanel(
     setActionMessage(null);
     setActionError(null);
     try {
-      const [{ buildConfiguredLanguageModel }, { generateText }, diff] =
-        await Promise.all([
-          import("@/modules/ai/lib/agent"),
-          import("ai"),
-          native.gitDiff(repo.repoRoot, null, true),
-        ]);
+      const [
+        { buildConfiguredLanguageModel },
+        { generateText },
+        diff,
+        recentCommits,
+      ] = await Promise.all([
+        import("@/modules/ai/lib/agent"),
+        import("ai"),
+        native.gitDiff(repo.repoRoot, null, true),
+        commitMessageLanguage === "Auto"
+          ? native.gitLog(repo.repoRoot, { limit: 10 }).catch(() => [])
+          : Promise.resolve([]),
+      ]);
       const { text: diffText, truncated } = truncateDiff(diff.diffText);
       const chatState = useChatStore.getState();
       const prefs = usePreferencesStore.getState();
@@ -896,7 +842,13 @@ export function useSourceControlPanel(
       const result = await generateText({
         model,
         system: COMMIT_MESSAGE_SYSTEM_PROMPT,
-        prompt: buildCommitMessagePrompt(stagedEntries, diffText, truncated),
+        prompt: buildCommitMessagePrompt(
+          stagedEntries,
+          diffText,
+          truncated,
+          commitMessageLanguage,
+          recentCommits.map((entry) => entry.subject),
+        ),
         maxOutputTokens: COMMIT_MESSAGE_MAX_OUTPUT_TOKENS,
         ...(selectedModelSupportsTemperature ? { temperature: 0.2 } : {}),
       });
@@ -905,7 +857,14 @@ export function useSourceControlPanel(
         const repair = await generateText({
           model,
           system: COMMIT_MESSAGE_SYSTEM_PROMPT,
-          prompt: buildRepairCommitMessagePrompt(message, stagedEntries),
+          prompt: buildRepairCommitMessagePrompt(
+            message,
+            stagedEntries,
+            commitMessageLanguage,
+            recentCommits.map((entry) => entry.subject),
+            diffText,
+            truncated,
+          ),
           maxOutputTokens: COMMIT_MESSAGE_MAX_OUTPUT_TOKENS,
           ...(selectedModelSupportsTemperature ? { temperature: 0 } : {}),
         });
@@ -926,12 +885,7 @@ export function useSourceControlPanel(
   }, [
     aiUnavailableReason,
     aiBusy,
-    lmstudioModelId,
-    mlxModelId,
-    ollamaModelId,
-    openaiCompatibleBaseURL,
-    openaiCompatibleModelId,
-    openrouterModelId,
+    commitMessageLanguage,
     repo,
     selectedModelId,
     selectedModelSupportsTemperature,
@@ -1012,6 +966,7 @@ export function useSourceControlPanel(
     pushHint,
     canGenerateCommitMessage,
     generateCommitMessageHint,
+    commitMessageLanguage,
     selectionTransition,
     stagedEmptyText,
     unstagedEmptyText,

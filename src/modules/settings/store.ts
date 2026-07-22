@@ -18,6 +18,7 @@ import type { KeyBinding, ShortcutId } from "@/modules/shortcuts/shortcuts";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { LazyStore } from "@tauri-apps/plugin-store";
 
+import type { CommitLanguage } from "@/modules/source-control/commitMessage";
 export type ThemePref = "system" | "light" | "dark";
 
 export const DEFAULT_THEME_ID = "terax-default";
@@ -169,6 +170,7 @@ export type Preferences = {
   agentNotifications: boolean;
   aiAutoApprove: AiAutoApproveSettings;
   defaultWorkspaceEnv: string;
+  commitMessageLanguage: CommitLanguage;
   shortcuts: Record<ShortcutId, KeyBinding[]>;
   editorAutoSave: boolean;
   editorAutoSaveDelay: number;
@@ -259,6 +261,7 @@ const KEY_ZOOM_LEVEL = "zoomLevel";
 const KEY_AGENT_NOTIFICATIONS = "agentNotifications";
 const KEY_AI_AUTO_APPROVE = "aiAutoApprove";
 const KEY_DEFAULT_WORKSPACE_ENV = "defaultWorkspaceEnv";
+const KEY_COMMIT_MESSAGE_LANGUAGE = "commitMessageLanguage";
 const KEY_SHORTCUTS = "shortcuts";
 const KEY_EDITOR_AUTO_SAVE = "editorAutoSave";
 const KEY_EDITOR_AUTO_SAVE_DELAY = "editorAutoSaveDelay";
@@ -349,6 +352,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   agentNotifications: true,
   aiAutoApprove: DEFAULT_AI_AUTO_APPROVE,
   defaultWorkspaceEnv: "local",
+  commitMessageLanguage: "Auto",
   shortcuts: {} as Record<ShortcutId, KeyBinding[]>,
   editorAutoSave: false,
   editorAutoSaveDelay: 1000,
@@ -533,6 +537,9 @@ export async function loadPreferences(): Promise<Preferences> {
     defaultWorkspaceEnv:
       get<string>(KEY_DEFAULT_WORKSPACE_ENV) ??
       DEFAULT_PREFERENCES.defaultWorkspaceEnv,
+    commitMessageLanguage:
+      get<CommitLanguage>(KEY_COMMIT_MESSAGE_LANGUAGE) ??
+      DEFAULT_PREFERENCES.commitMessageLanguage,
     shortcuts:
       get<Record<ShortcutId, KeyBinding[]>>(KEY_SHORTCUTS) ??
       DEFAULT_PREFERENCES.shortcuts,
@@ -888,6 +895,12 @@ export async function setDefaultWorkspaceEnv(value: string): Promise<void> {
   await writePref(KEY_DEFAULT_WORKSPACE_ENV, value);
 }
 
+export async function setCommitMessageLanguage(
+  value: CommitLanguage,
+): Promise<void> {
+  await writePref(KEY_COMMIT_MESSAGE_LANGUAGE, value);
+}
+
 export async function setShortcuts(
   value: Record<ShortcutId, KeyBinding[]> | {},
 ): Promise<void> {
@@ -954,6 +967,7 @@ export async function onPreferencesChange(
     [KEY_AGENT_NOTIFICATIONS]: "agentNotifications",
     [KEY_AI_AUTO_APPROVE]: "aiAutoApprove",
     [KEY_DEFAULT_WORKSPACE_ENV]: "defaultWorkspaceEnv",
+    [KEY_COMMIT_MESSAGE_LANGUAGE]: "commitMessageLanguage",
     [KEY_SHORTCUTS]: "shortcuts",
     [KEY_EDITOR_AUTO_SAVE]: "editorAutoSave",
     [KEY_EDITOR_AUTO_SAVE_DELAY]: "editorAutoSaveDelay",
