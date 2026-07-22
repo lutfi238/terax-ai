@@ -107,8 +107,11 @@ type SourceControlPanelState = {
   selectFile: (entry: SourceControlFileEntry) => Promise<void>;
   stageEntry: (entry: SourceControlEntry) => Promise<void>;
   unstageEntry: (entry: SourceControlEntry) => Promise<void>;
-  toggleStageFile: (entry: SourceControlFileEntry) => Promise<void>;
-  toggleAll: () => Promise<void>;
+  toggleStageFile: (
+    entry: SourceControlFileEntry,
+    nextChecked?: boolean | "indeterminate",
+  ) => Promise<void>;
+  toggleAll: (nextChecked?: boolean | "indeterminate") => Promise<void>;
   requestDiscardEntry: (entry: SourceControlEntry) => void;
   requestDiscardFile: (entry: SourceControlFileEntry) => void;
   requestDiscardAll: () => void;
@@ -128,6 +131,20 @@ function normalizeError(error: unknown): string {
     if (typeof message === "string") return message;
   }
   return "Unknown source control error";
+}
+export function checkboxChangeStages(
+  nextChecked: boolean | "indeterminate",
+): boolean {
+  return nextChecked === true;
+}
+
+export async function runOptimisticMutation(
+  applyOptimistic: () => void,
+  ipc: () => Promise<void>,
+): Promise<void> {
+  applyOptimistic();
+  await ipc();
+  applyOptimistic();
 }
 
 function normalizeStatusCode(status: string): string {
@@ -188,85 +205,6 @@ function truncateDiff(diff: string): { text: string; truncated: boolean } {
     return { text: diff, truncated: false };
   }
   return { text: diff.slice(0, COMMIT_DIFF_CHAR_LIMIT), truncated: true };
-}
-
-function optimisticStage(
-  status: GitStatusSnapshot,
-  paths: Set<string>,
-): GitStatusSnapshot {
-  let changed = false;
-  const next = status.changedFiles.map((file) => {
-    if (!paths.has(file.path)) return file;
-    if (file.staged && !file.unstaged) return file;
-    changed = true;
-    const wt =
-      file.worktreeStatus !== " " ? file.worktreeStatus : file.indexStatus;
-    return {
-      ...file,
-      indexStatus: wt,
-      worktreeStatus: " ",
-      staged: true,
-      unstaged: false,
-      untracked: false,
-    };
-  });
-  if (!changed) return status;
-  return { ...status, changedFiles: next };
-}
-
-function optimisticUnstage(
-  status: GitStatusSnapshot,
-  paths: Set<string>,
-): GitStatusSnapshot {
-  let changed = false;
-  const next: GitChangedFile[] = [];
-  for (const file of status.changedFiles) {
-    if (!paths.has(file.path)) {
-      next.push(file);
-      continue;
-    }
-    if (!file.staged && file.unstaged) {
-      next.push(file);
-      continue;
-    }
-    changed = true;
-    const idx =
-      file.indexStatus !== " " ? file.indexStatus : file.worktreeStatus;
-    if (idx === "R" && file.originalPath) {
-      next.push({
-        path: file.originalPath,
-        originalPath: null,
-        indexStatus: " ",
-        worktreeStatus: "D",
-        staged: false,
-        unstaged: true,
-        untracked: false,
-        statusLabel: "Deleted",
-      });
-      next.push({
-        path: file.path,
-        originalPath: null,
-        indexStatus: " ",
-        worktreeStatus: "?",
-        staged: false,
-        unstaged: true,
-        untracked: true,
-        statusLabel: "Untracked",
-      });
-      continue;
-    }
-    next.push({
-      ...file,
-      originalPath: null,
-      indexStatus: " ",
-      worktreeStatus: idx === "A" ? "?" : idx,
-      staged: false,
-      unstaged: true,
-      untracked: idx === "A",
-    });
-  }
-  if (!changed) return status;
-  return { ...status, changedFiles: next };
 }
 
 function optimisticDiscard(
@@ -347,6 +285,7 @@ export function useSourceControlPanel(
   >(null);
   const selectedRef = useRef<DiffSelection | null>(null);
   const reconcileTimerRef = useRef(0);
+  const mutationBusyRef = useRef(false);
 
   useEffect(() => {
     selectedRef.current = selected;
@@ -575,6 +514,7 @@ export function useSourceControlPanel(
           mode: current.mode === "+" ? "-" : "+",
         };
         setSelected(moved);
+        openSelection(moved, summary.repo.repoRoot, samePathOtherMode);
         setSelectionTransition("moved-group");
       } else {
         setSelected(null);
@@ -588,6 +528,7 @@ export function useSourceControlPanel(
     summary.hasRepo,
     summary.isLoading,
     summary.localError,
+    openSelection,
     summary.repo,
     summary.status,
   ]);
@@ -622,55 +563,84 @@ export function useSourceControlPanel(
       ipc: () => Promise<void>,
       affected: string[],
     ) => {
-      if (!repo || summary.busyAction) return;
+      if (!repo || mutationBusyRef.current || summary.busyAction) return;
+      mutationBusyRef.current = true;
       setLocalActionBusy(busyKey);
+      const repoRoot = repo.repoRoot;
       setActionMessage(null);
       setActionError(null);
-      if (optimistic) summary.applyStatus(optimistic);
-      for (const path of affected) {
-        invalidateDiff(workingDiffKey(repo.repoRoot, path, "+"));
-        invalidateDiff(workingDiffKey(repo.repoRoot, path, "-"));
-      }
+      const applyOptimistic = () => {
+        if (optimistic) summary.applyStatus(optimistic);
+        for (const path of affected) {
+          invalidateDiff(workingDiffKey(repoRoot, path, "+"));
+          invalidateDiff(workingDiffKey(repoRoot, path, "-"));
+        }
+      };
       try {
-        await ipc();
+        await runOptimisticMutation(applyOptimistic, ipc);
         scheduleReconcile();
       } catch (error) {
         setActionError(normalizeError(error));
         cancelReconcile();
         await summary.refresh({ remote: "never" }).catch(() => {});
       } finally {
+        mutationBusyRef.current = false;
         setLocalActionBusy(null);
       }
     },
     [cancelReconcile, repo, scheduleReconcile, summary],
   );
+  const runStatusMutation = useCallback(
+    async (
+      busyKey: string,
+      ipc: () => Promise<GitStatusSnapshot>,
+      affected: string[],
+    ) => {
+      if (!repo || mutationBusyRef.current || summary.busyAction) return;
+      mutationBusyRef.current = true;
+      setLocalActionBusy(busyKey);
+      setActionMessage(null);
+      setActionError(null);
+      try {
+        const snapshot = await ipc();
+        summary.replaceStatus(snapshot);
+        for (const path of affected) {
+          invalidateDiff(workingDiffKey(repo.repoRoot, path, "+"));
+          invalidateDiff(workingDiffKey(repo.repoRoot, path, "-"));
+        }
+      } catch (error) {
+        setActionError(normalizeError(error));
+        await summary.refresh({ remote: "never" }).catch(() => {});
+      } finally {
+        mutationBusyRef.current = false;
+        setLocalActionBusy(null);
+      }
+    },
+    [repo, summary],
+  );
 
   const stageEntry = useCallback(
     async (entry: SourceControlEntry) => {
       if (!repo) return;
-      const paths = new Set([entry.path]);
-      await runMutation(
+      await runStatusMutation(
         `stage:${entry.path}`,
-        (s) => optimisticStage(s, paths),
         () => native.gitStage(repo.repoRoot, [entry.path]),
         [entry.path],
       );
     },
-    [repo, runMutation],
+    [repo, runStatusMutation],
   );
 
   const unstageEntry = useCallback(
     async (entry: SourceControlEntry) => {
       if (!repo) return;
-      const paths = new Set([entry.path]);
-      await runMutation(
+      await runStatusMutation(
         `unstage:${entry.path}`,
-        (s) => optimisticUnstage(s, paths),
         () => native.gitUnstage(repo.repoRoot, [entry.path]),
         [entry.path],
       );
     },
-    [repo, runMutation],
+    [repo, runStatusMutation],
   );
 
   const requestDiscardEntry = useCallback(
@@ -714,25 +684,23 @@ export function useSourceControlPanel(
 
   const stageAllEntries = useCallback(async () => {
     if (!repo || unstagedEntries.length === 0) return;
-    const paths = new Set(unstagedEntries.map((entry) => entry.path));
-    await runMutation(
+    const paths = [...new Set(unstagedEntries.map((entry) => entry.path))];
+    await runStatusMutation(
       "stage:all",
-      (s) => optimisticStage(s, paths),
-      () => native.gitStage(repo.repoRoot, [...paths]),
-      [...paths],
+      () => native.gitStage(repo.repoRoot, paths),
+      paths,
     );
-  }, [repo, runMutation, unstagedEntries]);
+  }, [repo, runStatusMutation, unstagedEntries]);
 
   const unstageAllEntries = useCallback(async () => {
     if (!repo || stagedEntries.length === 0) return;
-    const paths = new Set(stagedEntries.map((entry) => entry.path));
-    await runMutation(
+    const paths = [...new Set(stagedEntries.map((entry) => entry.path))];
+    await runStatusMutation(
       "unstage:all",
-      (s) => optimisticUnstage(s, paths),
-      () => native.gitUnstage(repo.repoRoot, [...paths]),
-      [...paths],
+      () => native.gitUnstage(repo.repoRoot, paths),
+      paths,
     );
-  }, [repo, runMutation, stagedEntries]);
+  }, [repo, runStatusMutation, stagedEntries]);
 
   const selectFile = useCallback(
     async (entry: SourceControlFileEntry) => {
@@ -756,32 +724,38 @@ export function useSourceControlPanel(
   );
 
   const toggleStageFile = useCallback(
-    async (entry: SourceControlFileEntry) => {
-      if (!repo) return;
-      const paths = new Set([entry.path]);
-      if (entry.checkState === "checked") {
-        await runMutation(
-          `unstage:${entry.path}`,
-          (s) => optimisticUnstage(s, paths),
-          () => native.gitUnstage(repo.repoRoot, [entry.path]),
+    async (
+      entry: SourceControlFileEntry,
+      nextChecked: boolean | "indeterminate" = entry.checkState !== "checked",
+    ) => {
+      if (!repo || mutationBusyRef.current) return;
+      if (checkboxChangeStages(nextChecked)) {
+        await runStatusMutation(
+          `stage:${entry.path}`,
+          () => native.gitStage(repo.repoRoot, [entry.path]),
           [entry.path],
         );
       } else {
-        await runMutation(
-          `stage:${entry.path}`,
-          (s) => optimisticStage(s, paths),
-          () => native.gitStage(repo.repoRoot, [entry.path]),
+        await runStatusMutation(
+          `unstage:${entry.path}`,
+          () => native.gitUnstage(repo.repoRoot, [entry.path]),
           [entry.path],
         );
       }
     },
-    [repo, runMutation],
+    [repo, runStatusMutation],
   );
 
-  const toggleAll = useCallback(async () => {
-    if (headerCheckState === "checked") await unstageAllEntries();
-    else await stageAllEntries();
-  }, [headerCheckState, stageAllEntries, unstageAllEntries]);
+  const toggleAll = useCallback(
+    async (
+      nextChecked: boolean | "indeterminate" = headerCheckState !== "checked",
+    ) => {
+      if (mutationBusyRef.current) return;
+      if (checkboxChangeStages(nextChecked)) await stageAllEntries();
+      else await unstageAllEntries();
+    },
+    [headerCheckState, stageAllEntries, unstageAllEntries],
+  );
 
   const requestDiscardFile = useCallback(
     (entry: SourceControlFileEntry) => {

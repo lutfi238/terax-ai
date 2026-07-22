@@ -2,9 +2,8 @@ use tauri::{AppHandle, Manager};
 
 use crate::modules::git::operations;
 use crate::modules::git::types::{
-    DiscardEntry, GitBranchListResult, GitCommitFileChange, GitCommitResult,
-    GitDiffContentResult, GitDiffResult, GitLogEntry, GitPanelSnapshot, GitPushResult,
-    GitRepoInfo, GitStatusSnapshot,
+    DiscardEntry, GitBranchListResult, GitCommitFileChange, GitCommitResult, GitDiffContentResult,
+    GitDiffResult, GitLogEntry, GitPanelSnapshot, GitPushResult, GitRepoInfo, GitStatusSnapshot,
 };
 use crate::modules::workspace::{WorkspaceEnv, WorkspaceRegistry};
 
@@ -105,10 +104,11 @@ pub async fn git_stage(
     paths: Vec<String>,
     workspace: Option<WorkspaceEnv>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<GitStatusSnapshot, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
     blocking(app, move |r| {
-        operations::stage(r, &repo_root, &paths, &workspace).map_err(Into::into)
+        operations::stage(r, &repo_root, &paths, &workspace).map_err(String::from)?;
+        operations::status(r, &repo_root, &workspace).map_err(Into::into)
     })
     .await
 }
@@ -119,10 +119,11 @@ pub async fn git_unstage(
     paths: Vec<String>,
     workspace: Option<WorkspaceEnv>,
     app: AppHandle,
-) -> Result<(), String> {
+) -> Result<GitStatusSnapshot, String> {
     let workspace = WorkspaceEnv::from_option(workspace);
     blocking(app, move |r| {
-        operations::unstage(r, &repo_root, &paths, &workspace).map_err(Into::into)
+        operations::unstage(r, &repo_root, &paths, &workspace).map_err(String::from)?;
+        operations::status(r, &repo_root, &workspace).map_err(Into::into)
     })
     .await
 }

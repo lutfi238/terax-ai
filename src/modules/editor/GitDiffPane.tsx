@@ -11,6 +11,8 @@ import {
   fetchCommitDiff,
   fetchWorkingDiff,
   getCachedDiff,
+  getDiffGeneration,
+  subscribeDiffGeneration,
   workingDiffKey,
 } from "./lib/diffCache";
 import {
@@ -123,8 +125,8 @@ function cacheKey(source: WorkingSource | CommitSource): string {
     : commitDiffKey(source.repoRoot, source.sha, source.path);
 }
 
-function loadStateFromCache(source: WorkingSource | CommitSource): LoadState {
-  const hit = getCachedDiff(cacheKey(source));
+function loadStateFromCache(key: string, path: string): LoadState {
+  const hit = getCachedDiff(key);
   if (!hit) return { kind: "idle" };
   return {
     kind: "loaded",
@@ -132,22 +134,30 @@ function loadStateFromCache(source: WorkingSource | CommitSource): LoadState {
     modifiedContent: hit.modifiedContent,
     isBinary: hit.isBinary,
     fallbackPatch: hit.fallbackPatch,
-    langExt: resolveLanguageSync(source.path)?.ext ?? null,
+    langExt: resolveLanguageSync(path)?.ext ?? null,
   };
 }
 
 export function GitDiffPane({ source, chipLabel, active }: Props) {
   const cmRef = useRef<ReactCodeMirrorRef>(null);
   const themeExt = useEditorThemeExt();
-  const [state, setState] = useState<LoadState>(() =>
-    active ? loadStateFromCache(source) : { kind: "idle" },
-  );
-
   const key = cacheKey(source);
+  const sourceKind = source.kind;
+  const path = source.path;
+  const repoRoot = source.repoRoot;
+  const originalPath = source.originalPath;
+  const revision = source.kind === "working" ? source.mode : source.sha;
+  const [state, setState] = useState<LoadState>(() =>
+    active ? loadStateFromCache(key, path) : { kind: "idle" },
+  );
+  const [generation, setGeneration] = useState(() => getDiffGeneration(key));
+
+  useEffect(() => subscribeDiffGeneration(key, setGeneration), [key]);
 
   useEffect(() => {
     if (!active) return;
-    const cached = loadStateFromCache(source);
+    if (generation !== getDiffGeneration(key)) return;
+    const cached = loadStateFromCache(key, path);
     if (cached.kind === "loaded") {
       setState(cached);
       return;
@@ -155,22 +165,12 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
     let cancelled = false;
     setState({ kind: "loading" });
     const promise =
-      source.kind === "working"
-        ? fetchWorkingDiff(
-            source.repoRoot,
-            source.path,
-            source.mode,
-            source.originalPath,
-          )
-        : fetchCommitDiff(
-            source.repoRoot,
-            source.sha,
-            source.path,
-            source.originalPath,
-          );
-    Promise.all([promise, resolveLanguage(source.path).catch(() => null)])
+      sourceKind === "working"
+        ? fetchWorkingDiff(repoRoot, path, revision as "-" | "+", originalPath)
+        : fetchCommitDiff(repoRoot, revision, path, originalPath);
+    Promise.all([promise, resolveLanguage(path).catch(() => null)])
       .then(([res, lang]) => {
-        if (cancelled) return;
+        if (cancelled || generation !== getDiffGeneration(key)) return;
         setState({
           kind: "loaded",
           originalContent: res.originalContent,
@@ -181,7 +181,7 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
         });
       })
       .catch((err) => {
-        if (cancelled) return;
+        if (cancelled || generation !== getDiffGeneration(key)) return;
         setState({
           kind: "error",
           message:
@@ -193,11 +193,18 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [active, key, source]);
+  }, [
+    active,
+    generation,
+    key,
+    originalPath,
+    path,
+    repoRoot,
+    revision,
+    sourceKind,
+  ]);
 
-  const path = source.path;
-  const repoRoot = source.repoRoot;
-  const mode = source.kind === "working" ? source.mode : "+";
+  const mode = sourceKind === "working" ? (revision as "-" | "+") : "+";
   const loaded = state.kind === "loaded" ? state : null;
   const originalContent = loaded?.originalContent ?? "";
   const modifiedContent = loaded?.modifiedContent ?? "";
@@ -236,9 +243,7 @@ export function GitDiffPane({ source, chipLabel, active }: Props) {
     let cancelled = false;
     resolveLanguage(path).then((res) => {
       if (cancelled || !res) return;
-      setState((s) =>
-        s.kind === "loaded" ? { ...s, langExt: res.ext } : s,
-      );
+      setState((s) => (s.kind === "loaded" ? { ...s, langExt: res.ext } : s));
     });
     return () => {
       cancelled = true;

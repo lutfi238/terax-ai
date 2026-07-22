@@ -794,57 +794,59 @@ export const SourceControlPanel = memo(function SourceControlPanel({
                   placeholder="Commit message"
                   rows={6}
                   className={cn(
-                    "min-h-[132px] border-border resize-y rounded-lg bg-transparent px-3 pb-7 pt-2.5 pr-9 text-[12.5px] leading-snug shadow-none placeholder:text-muted-foreground/65 focus-visible:ring-0 focus:border-0",
+                    "field-sizing-fixed h-[108px] min-h-[108px] max-h-[108px] resize-none overflow-y-auto border-0 rounded-t-lg rounded-b-none bg-transparent px-3 pb-2 pt-2.5 pr-9 text-[12.5px] leading-snug shadow-none placeholder:text-muted-foreground/65 focus-visible:ring-0 focus-visible:border-0",
                   )}
                 />
-                <div className="pointer-events-none absolute inset-x-3 bottom-1.5 flex items-center justify-between p-1 gap-2 text-[10px] tabular-nums text-muted-foreground/55">
+                <div className="flex h-7 items-center gap-2 border-t border-border/45 px-3 text-[10px] tabular-nums text-muted-foreground/55">
                   {scm.commitMessage.length > 0 ? (
                     <span>Ch: {scm.commitMessage.length}</span>
                   ) : (
-                    <span className="flex gap-2 items-center">
-                      {commitShortcut} <p>to commit</p>
+                    <span className="flex items-center gap-2">
+                      {commitShortcut} <span>to commit</span>
                     </span>
                   )}
-                </div>
-                <div className="absolute bottom-1 right-1">
-                  <Select
-                    value={scm.commitMessageLanguage}
-                    onValueChange={(value) => {
-                      if (value !== CUSTOM_COMMIT_LANGUAGE) {
-                        void setCommitMessageLanguage(value as CommitLanguage);
-                        return;
-                      }
-                      const custom = window.prompt("Commit message language");
-                      if (custom?.trim()) {
-                        void setCommitMessageLanguage(custom.trim());
-                      }
-                    }}
-                  >
-                    <SelectTrigger
-                      size="sm"
-                      aria-label="Commit message language"
-                      className="h-6 max-w-30 border-0 bg-transparent px-1.5 text-[10px] text-muted-foreground shadow-none"
+                  <div className="ml-auto">
+                    <Select
+                      value={scm.commitMessageLanguage}
+                      onValueChange={(value) => {
+                        if (value !== CUSTOM_COMMIT_LANGUAGE) {
+                          void setCommitMessageLanguage(
+                            value as CommitLanguage,
+                          );
+                          return;
+                        }
+                        const custom = window.prompt("Commit message language");
+                        if (custom?.trim()) {
+                          void setCommitMessageLanguage(custom.trim());
+                        }
+                      }}
                     >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent align="end">
-                      {COMMIT_LANGUAGES.map((language) => (
-                        <SelectItem key={language} value={language}>
-                          {language}
+                      <SelectTrigger
+                        size="sm"
+                        aria-label="Commit message language"
+                        className="h-6 max-w-30 border-0 bg-transparent px-1.5 text-[10px] text-muted-foreground shadow-none"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent align="end">
+                        {COMMIT_LANGUAGES.map((language) => (
+                          <SelectItem key={language} value={language}>
+                            {language}
+                          </SelectItem>
+                        ))}
+                        {!COMMIT_LANGUAGES.includes(
+                          scm.commitMessageLanguage as (typeof COMMIT_LANGUAGES)[number],
+                        ) ? (
+                          <SelectItem value={scm.commitMessageLanguage}>
+                            {scm.commitMessageLanguage}
+                          </SelectItem>
+                        ) : null}
+                        <SelectItem value={CUSTOM_COMMIT_LANGUAGE}>
+                          Custom...
                         </SelectItem>
-                      ))}
-                      {!COMMIT_LANGUAGES.includes(
-                        scm.commitMessageLanguage as (typeof COMMIT_LANGUAGES)[number],
-                      ) ? (
-                        <SelectItem value={scm.commitMessageLanguage}>
-                          {scm.commitMessageLanguage}
-                        </SelectItem>
-                      ) : null}
-                      <SelectItem value={CUSTOM_COMMIT_LANGUAGE}>
-                        Custom...
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
                 <div className="absolute right-1 top-1">
                   <Tooltip>
@@ -1100,9 +1102,14 @@ type RowRendererProps = {
   headerCheckState: CheckState;
   repoRoot: string | null;
   onFocusRow: (key: string | null) => void;
-  onToggleAll: () => Promise<void> | void;
+  onToggleAll: (
+    nextChecked?: boolean | "indeterminate",
+  ) => Promise<void> | void;
   onSelectFile: (entry: SourceControlFileEntry) => Promise<void>;
-  onToggleStageFile: (entry: SourceControlFileEntry) => Promise<void>;
+  onToggleStageFile: (
+    entry: SourceControlFileEntry,
+    nextChecked?: boolean | "indeterminate",
+  ) => Promise<void>;
   onDiscardFile: (entry: SourceControlFileEntry) => void;
   onOpenFile?: (absolutePath: string) => void;
 };
@@ -1160,7 +1167,7 @@ function ListHeader({
           aria-label="Stage all changes"
           checked={checkboxValue(headerCheckState)}
           disabled={actionBusy !== null}
-          onCheckedChange={() => void onToggleAll()}
+          onCheckedChange={(nextChecked) => void onToggleAll(nextChecked)}
           className="size-3.5"
         />
       </label>
@@ -1291,7 +1298,9 @@ const EntryRow = memo(function EntryRow({
                 aria-label={`Stage ${entry.path}`}
                 checked={checkboxValue(entry.checkState)}
                 disabled={disabled}
-                onCheckedChange={() => void onToggleStageFile(entry)}
+                onCheckedChange={(nextChecked) =>
+                  void onToggleStageFile(entry, nextChecked)
+                }
                 className="size-3.5"
               />
             )}

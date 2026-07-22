@@ -9,13 +9,11 @@ use crate::modules::git::process::{
 };
 use crate::modules::git::types::{
     DiscardEntry, GitBranchEntry, GitBranchListResult, GitCommitFileChange, GitCommitResult,
-    GitDiffContentResult, GitDiffResult, GitLogEntry, GitOutput, GitPanelSnapshot,
-    GitPushResult, GitRepoInfo, GitStatusSnapshot, TextSource, DEFAULT_TIMEOUT_SECS,
-    NETWORK_TIMEOUT_SECS,
+    GitDiffContentResult, GitDiffResult, GitLogEntry, GitOutput, GitPanelSnapshot, GitPushResult,
+    GitRepoInfo, GitStatusSnapshot, TextSource, DEFAULT_TIMEOUT_SECS, NETWORK_TIMEOUT_SECS,
 };
 use crate::modules::git::utils::{
-    authorized_repo_root, canonical_dir, resolve_within_repo, split_upstream,
-    ResolvedGitDirectory,
+    authorized_repo_root, canonical_dir, resolve_within_repo, split_upstream, ResolvedGitDirectory,
 };
 use crate::modules::workspace::{WorkspaceEnv, WorkspaceRegistry};
 
@@ -315,12 +313,7 @@ pub fn unstage(
     if !looks_like_no_head(&output) {
         return ensure_success(&output, "git reset failed");
     }
-    let mut rm_args: Vec<OsString> = vec![
-        "rm".into(),
-        "--cached".into(),
-        "-r".into(),
-        "--".into(),
-    ];
+    let mut rm_args: Vec<OsString> = vec!["rm".into(), "--cached".into(), "-r".into(), "--".into()];
     for p in &resolved {
         rm_args.push(p.clone().into());
     }
@@ -1078,10 +1071,7 @@ pub fn list_branches(
                 && !existing.is_head;
             if should_replace {
                 let is_head = existing.is_head || b.is_head;
-                deduped[existing_idx] = GitBranchEntry {
-                    is_head,
-                    ..b
-                };
+                deduped[existing_idx] = GitBranchEntry { is_head, ..b };
             } else if b.is_head && !existing.is_head {
                 let mut updated = deduped[existing_idx].clone();
                 updated.is_head = true;
@@ -1113,7 +1103,11 @@ fn push_worktree(
         b.clone()
     } else if let Some(ref sha) = head_sha {
         // if detached HEAD with no branch — show shortened SHA as name
-        let short = if sha.len() >= 7 { &sha[..7] } else { sha.as_str() };
+        let short = if sha.len() >= 7 {
+            &sha[..7]
+        } else {
+            sha.as_str()
+        };
         format!("(detached @ {})", short)
     } else {
         return;
@@ -1150,6 +1144,68 @@ pub fn checkout_branch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::process::Command;
+
+    fn git(repo: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .expect("git should run in test fixture");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn stage_and_unstage_return_authoritative_tracked_file_status() {
+        let temp = tempfile::tempdir().expect("temp repo");
+        let root = temp.path();
+        git(root, &["init", "-q"]);
+        git(
+            root,
+            &["config", "user.email", "terax-test@example.invalid"],
+        );
+        git(root, &["config", "user.name", "Terax Test"]);
+        fs::write(root.join("PROGRESS.md"), "before\n").expect("seed file");
+        git(root, &["add", "PROGRESS.md"]);
+        git(root, &["commit", "-qm", "chore: seed fixture"]);
+        fs::write(root.join("PROGRESS.md"), "after\n").expect("modify file");
+
+        let registry = WorkspaceRegistry::default();
+        let canonical = registry.authorize(root).expect("authorize fixture");
+        let repo_root = canonical.to_string_lossy().to_string();
+        let workspace = WorkspaceEnv::Local;
+
+        let before = status(&registry, &repo_root, &workspace).expect("status before");
+        let file = &before.changed_files[0];
+        assert_eq!(
+            (file.index_status.as_str(), file.worktree_status.as_str()),
+            (" ", "M")
+        );
+
+        stage(&registry, &repo_root, &["PROGRESS.md".into()], &workspace)
+            .expect("stage tracked file");
+        let staged = status(&registry, &repo_root, &workspace).expect("status staged");
+        let file = &staged.changed_files[0];
+        assert_eq!(
+            (file.index_status.as_str(), file.worktree_status.as_str()),
+            ("M", " ")
+        );
+
+        unstage(&registry, &repo_root, &["PROGRESS.md".into()], &workspace)
+            .expect("unstage tracked file");
+        let unstaged = status(&registry, &repo_root, &workspace).expect("status unstaged");
+        let file = &unstaged.changed_files[0];
+        assert_eq!(
+            (file.index_status.as_str(), file.worktree_status.as_str()),
+            (" ", "M")
+        );
+    }
 
     #[test]
     fn sha_is_safe_accepts_hex() {

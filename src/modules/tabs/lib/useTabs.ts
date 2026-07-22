@@ -139,6 +139,40 @@ function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.length ? parts[parts.length - 1] : path;
 }
+export type OpenGitDiffInput = {
+  path: string;
+  repoRoot: string;
+  mode: "-" | "+";
+  originalPath?: string | null;
+  title?: string;
+};
+
+export function replaceGitDiffTab(
+  tabs: Tab[],
+  input: OpenGitDiffInput,
+): { tabs: Tab[]; id: number } | null {
+  const existing = tabs.find(
+    (tab) =>
+      tab.kind === "git-diff" &&
+      tab.repoRoot === input.repoRoot &&
+      tab.path === input.path,
+  );
+  if (!existing) return null;
+  const title = input.title ?? `${basename(input.path)} (${input.mode})`;
+  return {
+    id: existing.id,
+    tabs: tabs.map((tab) =>
+      tab.id === existing.id
+        ? {
+            ...tab,
+            title,
+            mode: input.mode,
+            originalPath: input.originalPath ?? null,
+          }
+        : tab,
+    ),
+  };
+}
 
 function titleFromUrl(url: string): string {
   try {
@@ -235,7 +269,10 @@ export function planSpaceRemoval(
   let activeId = currentActiveId;
   if (!next.some((t) => t.spaceId === fallbackSpaceId)) {
     const tabId = allocId();
-    next = [...next, coldTerminalTab(tabId, allocId(), fallbackSpaceId, fallbackCwd)];
+    next = [
+      ...next,
+      coldTerminalTab(tabId, allocId(), fallbackSpaceId, fallbackCwd),
+    ];
     activeId = tabId;
   } else if (!next.some((t) => t.id === currentActiveId)) {
     const inFallback = next.filter((t) => t.spaceId === fallbackSpaceId);
@@ -751,59 +788,38 @@ export function useTabs(initial?: Partial<TerminalTab>) {
     [],
   );
 
-  const openGitDiffTab = useCallback(
-    (input: {
-      path: string;
-      repoRoot: string;
-      mode: "-" | "+";
-      originalPath?: string | null;
-      title?: string;
-    }) => {
-      const curr = tabsRef.current;
-      const existing = curr.find(
-        (t) =>
-          t.kind === "git-diff" &&
-          t.repoRoot === input.repoRoot &&
-          t.path === input.path &&
-          t.mode === input.mode,
-      );
-      const computedTitle =
-        input.title ?? `${basename(input.path)} (${input.mode})`;
-      const originalPath = input.originalPath ?? null;
+  const openGitDiffTab = useCallback((input: OpenGitDiffInput) => {
+    const curr = tabsRef.current;
+    const replacement = replaceGitDiffTab(curr, input);
+    if (replacement) {
+      tabsRef.current = replacement.tabs;
+      setTabs(replacement.tabs);
+      setActiveId(replacement.id);
+      return replacement.id;
+    }
+    const computedTitle =
+      input.title ?? `${basename(input.path)} (${input.mode})`;
+    const originalPath = input.originalPath ?? null;
 
-      if (existing) {
-        const nextTabs = curr.map((t) =>
-          t.id === existing.id
-            ? { ...t, title: computedTitle, originalPath }
-            : t,
-        );
-        tabsRef.current = nextTabs;
-        setTabs(nextTabs);
-        setActiveId(existing.id);
-        return existing.id;
-      }
-
-      const id = nextIdRef.current++;
-      const nextTabs = [
-        ...curr,
-        {
-          id,
-          kind: "git-diff",
-          spaceId: activeSpaceIdRef.current,
-          title: computedTitle,
-          path: input.path,
-          repoRoot: input.repoRoot,
-          mode: input.mode,
-          originalPath,
-        } satisfies GitDiffTab,
-      ];
-      tabsRef.current = nextTabs;
-      setTabs(nextTabs);
-      setActiveId(id);
-      return id;
-    },
-    [],
-  );
+    const id = nextIdRef.current++;
+    const nextTabs = [
+      ...curr,
+      {
+        id,
+        kind: "git-diff",
+        spaceId: activeSpaceIdRef.current,
+        title: computedTitle,
+        path: input.path,
+        repoRoot: input.repoRoot,
+        mode: input.mode,
+        originalPath,
+      } satisfies GitDiffTab,
+    ];
+    tabsRef.current = nextTabs;
+    setTabs(nextTabs);
+    setActiveId(id);
+    return id;
+  }, []);
 
   const openCommitHistoryTab = useCallback(
     (input: { repoRoot: string; branch?: string | null }) => {
@@ -966,9 +982,7 @@ export function useTabs(initial?: Partial<TerminalTab>) {
 
   const selectByIndex = useCallback(
     (idx: number, spaceId?: string) => {
-      const t = spaceId
-        ? pickTabBySpaceIndex(tabs, idx, spaceId)
-        : tabs[idx];
+      const t = spaceId ? pickTabBySpaceIndex(tabs, idx, spaceId) : tabs[idx];
       if (t) setActiveId(t.id);
     },
     [tabs],

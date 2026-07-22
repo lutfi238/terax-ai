@@ -41,9 +41,8 @@ export type SourceControlSummary = {
   applyStatus: (
     updater: (status: GitStatusSnapshot) => GitStatusSnapshot,
   ) => void;
-  refresh: (options?: {
-    remote?: SourceControlRefreshMode;
-  }) => Promise<void>;
+  replaceStatus: (status: GitStatusSnapshot) => void;
+  refresh: (options?: { remote?: SourceControlRefreshMode }) => Promise<void>;
   runRemoteAction: (
     mode?: SourceControlRemoteActionMode,
   ) => Promise<SourceControlRemoteActionResult>;
@@ -93,7 +92,13 @@ export function getSourceControlRemoteIndicator(
   >,
 ): SourceControlRemoteIndicator {
   if (!summary.hasRepo || !summary.upstream) {
-    return { visible: false, label: "", title: "", disabled: true, action: null };
+    return {
+      visible: false,
+      label: "",
+      title: "",
+      disabled: true,
+      action: null,
+    };
   }
   if (summary.ahead > 0 && summary.behind > 0) {
     return {
@@ -195,6 +200,9 @@ export function useSourceControl(
 
   const applyStatus = useCallback(
     (updater: (status: GitStatusSnapshot) => GitStatusSnapshot) => {
+      requestIdRef.current++;
+      inflightRef.current = null;
+      inflightModeRef.current = "never";
       setState((current) => {
         if (!current.status) return current;
         const next = updater(current.status);
@@ -204,6 +212,31 @@ export function useSourceControl(
     },
     [],
   );
+  const replaceStatus = useCallback((status: GitStatusSnapshot) => {
+    requestIdRef.current++;
+    inflightRef.current = null;
+    inflightModeRef.current = "never";
+    setState((current) => {
+      if (!current.repo || current.repo.repoRoot !== status.repoRoot) {
+        return current;
+      }
+      return {
+        ...current,
+        repo: current.repo
+          ? {
+              ...current.repo,
+              branch: status.branch,
+              upstream: status.upstream,
+              isDetached: status.isDetached,
+            }
+          : current.repo,
+        status,
+        hasRepo: true,
+        isLoading: false,
+        localError: null,
+      };
+    });
+  }, []);
 
   const doRefresh = useCallback(
     async (remoteMode: SourceControlRefreshMode): Promise<void> => {
@@ -230,7 +263,11 @@ export function useSourceControl(
           ? activeRoot
           : undefined;
 
-      setState((current) => ({ ...current, isLoading: true, localError: null }));
+      setState((current) => ({
+        ...current,
+        isLoading: true,
+        localError: null,
+      }));
 
       try {
         let repo: GitRepoInfo | null;
@@ -301,8 +338,7 @@ export function useSourceControl(
           repo.upstream &&
           remoteMode !== "never" &&
           (remoteMode === "always" ||
-            Date.now() -
-              (autoFetchByRepoRef.current.get(repo.repoRoot) ?? 0) >=
+            Date.now() - (autoFetchByRepoRef.current.get(repo.repoRoot) ?? 0) >=
               AUTO_FETCH_THROTTLE_MS);
 
         if (shouldAutoFetch) {
@@ -488,9 +524,10 @@ export function useSourceControl(
       busyAction: state.busyAction,
       lastRemoteError: state.lastRemoteError,
       applyStatus,
+      replaceStatus,
       refresh,
       runRemoteAction,
     }),
-    [state, applyStatus, refresh, runRemoteAction],
+    [state, applyStatus, replaceStatus, refresh, runRemoteAction],
   );
 }
