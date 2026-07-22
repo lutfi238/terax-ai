@@ -24,12 +24,9 @@ export function AboutSection() {
   const [version, setVersion] = useState("");
   const [name, setName] = useState("Terax");
   const [build, setBuild] = useState("");
-  const { status, check, install } = useUpdater({ autoCheck: false });
+  const { status, check } = useUpdater({ autoCheck: false });
   const checking = status.kind === "checking";
-  const downloading = status.kind === "downloading";
   const available = status.kind === "available";
-  const manualAvailable = status.kind === "manual-available";
-  const ready = status.kind === "ready";
   const checkLabel =
     status.kind === "uptodate"
       ? "You're up to date"
@@ -37,17 +34,11 @@ export function AboutSection() {
         ? "Check failed — retry"
         : checking
           ? "Checking…"
-          : downloading
-            ? "Downloading…"
-            : ready
-              ? "Restart to install"
-              : available
-                ? `Install v${status.update.version}`
-                : manualAvailable
-                  ? `Update to v${status.info.version}`
-                  : "Check for updates";
+          : available
+            ? `View official v${status.info.version}`
+            : "Check for updates";
   const onUpdateClick = () => {
-    if (available) void install();
+    if (available) void openUrl(status.info.releaseUrl);
     else void check({ manual: true });
   };
 
@@ -121,11 +112,7 @@ export function AboutSection() {
 
       <div className="flex flex-col gap-1.5">
         <div className="flex gap-2">
-          <Button
-            size="sm"
-            onClick={onUpdateClick}
-            disabled={checking || downloading || ready}
-          >
+          <Button size="sm" onClick={onUpdateClick} disabled={checking}>
             {checkLabel}
           </Button>
           <Button
@@ -150,15 +137,6 @@ export function AboutSection() {
             {status.message}
           </p>
         )}
-        {downloading && status.contentLength ? (
-          <p className="text-[11px] text-muted-foreground">
-            {Math.min(
-              100,
-              Math.round((status.downloaded / status.contentLength) * 100),
-            )}
-            %
-          </p>
-        ) : null}
       </div>
     </div>
   );

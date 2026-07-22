@@ -126,7 +126,10 @@ async fn open_settings_window(app: tauri::AppHandle, tab: Option<String>) -> Res
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.decorations(false).transparent(true);
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let window = builder.build().map_err(|e| e.to_string())?;
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _window = builder.build().map_err(|e| e.to_string())?;
 
     // Some Linux compositors (GNOME/Mutter with CSD-by-default) ignore the
     // builder-time decorations flag — re-assert it after realize.
@@ -181,7 +184,6 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_clipboard_manager::init());
     builder
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         // Skip restoring VISIBLE — frontend calls window.show() after first
         // paint so the user never sees a transparent window-shadow flash on
         // Windows/Linux.
