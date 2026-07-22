@@ -17,20 +17,17 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import {
-  getBindingTokens,
-  SHORTCUTS,
-} from "@/modules/shortcuts/shortcuts";
+import { getBindingTokens, SHORTCUTS } from "@/modules/shortcuts/shortcuts";
 import {
   type CustomEndpoint,
   compatModelIdForEndpoint,
   DEFAULT_MODEL_ID,
   getAutocompleteEligibleModels,
   getCompatModelInfo,
-  getModel,
   getProvider,
   isCompatModelId,
   MODELS,
+  resolveModel,
   type ModelId,
   PROVIDERS,
   type ProviderId,
@@ -58,6 +55,7 @@ import {
   setAutocompleteModelId,
   setAutocompleteProvider,
   setAutocompleteTrigger,
+  resolveStoredDefaultModelId,
   setCustomEndpoints,
   setDefaultModel,
   setFavoriteModelIds,
@@ -215,9 +213,15 @@ export function ModelsSection() {
     id: string,
     patch: Partial<CustomEndpoint>,
   ) => {
-    await setCustomEndpoints(
-      customEndpoints.map((e) => (e.id === id ? { ...e, ...patch } : e)),
+    const nextEndpoints = customEndpoints.map((endpoint) =>
+      endpoint.id === id ? { ...endpoint, ...patch } : endpoint,
     );
+    const nextDefault = resolveStoredDefaultModelId(
+      defaultModel,
+      nextEndpoints,
+    );
+    if (nextDefault !== defaultModel) await setDefaultModel(nextDefault);
+    await setCustomEndpoints(nextEndpoints);
   };
 
   const removeCustomEndpoint = async (id: string) => {
@@ -239,6 +243,9 @@ export function ModelsSection() {
     }
     if (recentModelIds.includes(deadModelId)) {
       await setRecentModelIds(recentModelIds.filter((m) => m !== deadModelId));
+    }
+    if (defaultModel === deadModelId) {
+      await setDefaultModel(DEFAULT_MODEL_ID);
     }
 
     // If the deleted endpoint was the active model, the selection would dangle
@@ -532,7 +539,7 @@ function DefaultsBlock({
   keys,
   customEndpoints,
 }: {
-  defaultModel: ModelId;
+  defaultModel: string;
   configuredIds: Set<ProviderId>;
   keys: KeysMap;
   customEndpoints: readonly CustomEndpoint[];
@@ -545,6 +552,7 @@ function DefaultsBlock({
           <DefaultModelPicker
             defaultModel={defaultModel}
             configuredIds={configuredIds}
+            customEndpoints={customEndpoints}
           />
         </FieldRow>
         <AutocompleteRow
@@ -560,12 +568,17 @@ function DefaultsBlock({
 function DefaultModelPicker({
   defaultModel,
   configuredIds,
+  customEndpoints,
 }: {
-  defaultModel: ModelId;
+  defaultModel: string;
   configuredIds: Set<ProviderId>;
+  customEndpoints: readonly CustomEndpoint[];
 }) {
-  const m = getModel(defaultModel);
-  const hasAny = configuredIds.size > 0;
+  const configuredCustomEndpoints = customEndpoints.filter(
+    (endpoint) => endpoint.baseURL.trim() && endpoint.modelId.trim(),
+  );
+  const m = resolveModel(defaultModel, customEndpoints);
+  const hasAny = configuredIds.size > 0 || configuredCustomEndpoints.length > 0;
 
   return (
     <DropdownMenu>
@@ -625,6 +638,34 @@ function DefaultModelPicker({
               </div>
             );
           })}
+          {configuredCustomEndpoints.length > 0 && (
+            <div className="px-1 pt-1.5">
+              <div className="mb-0.5 flex items-center gap-1.5 px-2 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                <ProviderIcon provider="openai-compatible" size={11} />
+                <span>OpenAI Compatible</span>
+              </div>
+              {configuredCustomEndpoints.map((endpoint) => {
+                const modelId = compatModelIdForEndpoint(endpoint.id);
+                return (
+                  <DropdownMenuItem
+                    key={endpoint.id}
+                    onSelect={() => void setDefaultModel(modelId)}
+                    className={cn(
+                      "flex items-start gap-2 text-[12px]",
+                      modelId === defaultModel && "bg-accent/50",
+                    )}
+                  >
+                    <span className="flex flex-1 flex-col">
+                      <span>{endpoint.modelId}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {endpoint.name} · {endpoint.baseURL}
+                      </span>
+                    </span>
+                  </DropdownMenuItem>
+                );
+              })}
+            </div>
+          )}
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
