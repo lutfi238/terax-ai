@@ -293,7 +293,6 @@ export default function App() {
     [],
   );
   const miniOpen = useChatStore((s) => s.mini.open);
-  const miniPresence = usePresence(miniOpen, 200);
   const openMini = useChatStore((s) => s.openMini);
   const toggleMini = useChatStore((s) => s.toggleMini);
   const focusInput = useChatStore((s) => s.focusInput);
@@ -1315,8 +1314,8 @@ export default function App() {
             </>
           ) : null}
 
-          {hasComposer && miniPresence.mounted ? (
-            <AiMiniWindow state={miniPresence.state} />
+          {hasComposer && miniOpen ? (
+            <AiMiniWindow state="open" />
           ) : null}
           {askPresence.mounted ? (
             <SelectionAskAi
