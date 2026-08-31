@@ -11,6 +11,10 @@ jobs:
     permissions:
       contents: write
       id-token: write
+    env:
+      APPLE_SIGNING_CONFIGURED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_PATH != '' }}
+      SIGNPATH_CONFIGURED: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+      UPDATER_SIGNING_CONFIGURED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,8 +67,20 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Disable updater artifacts for unsigned release
+        if: env.UPDATER_SIGNING_CONFIGURED != 'true'
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = "src-tauri/tauri.conf.json";
+          const config = JSON.parse(fs.readFileSync(path, "utf8"));
+          config.bundle.createUpdaterArtifacts = false;
+          fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+
       - name: Write Apple API key to disk
-        if: startsWith(matrix.platform, 'macos')
+        if: startsWith(matrix.platform, 'macos') && env.APPLE_SIGNING_CONFIGURED == 'true'
         shell: bash
         env:
           KEY_CONTENT: ${{ secrets.APPLE_API_KEY_PATH }}
@@ -103,11 +119,9 @@ jobs:
       # so the stale copy wins and EGL fails with EGL_BAD_PARAMETER. libgdk-3
       # hard-links these three, so removing them only redirects resolution to
       # the host copy, which every GTK-capable system has. They are on the
-      # AppImage excludelist for this exact reason. The re-signed AppImage and
-      # its .sig are re-uploaded here; the updater manifest is patched in the
-      # patch-appimage-updater job after all matrix legs finish, so a parallel
-      # macOS/Windows upload cannot clobber the combined latest.json.
-      - name: Fix AppImage wayland libs and re-sign
+      # AppImage excludelist for this exact reason. Signed releases regenerate
+      # the updater signature; unsigned fork releases upload only the AppImage.
+      - name: Fix AppImage wayland libs and upload
         if: matrix.platform == 'ubuntu-22.04' && startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -157,12 +171,16 @@ jobs:
 
           cp "$WORK/$BASENAME" "$APPIMAGE"
 
-          rm -f "$APPIMAGE.sig"
-          pnpm tauri signer sign "$APPIMAGE"
-
           TAG="${GITHUB_REF_NAME}"
-          gh release upload "$TAG" "$APPIMAGE" "$APPIMAGE.sig" \
-            --clobber --repo "$GITHUB_REPOSITORY"
+          if [[ "$UPDATER_SIGNING_CONFIGURED" == "true" ]]; then
+            rm -f "$APPIMAGE.sig"
+            pnpm tauri signer sign "$APPIMAGE"
+            gh release upload "$TAG" "$APPIMAGE" "$APPIMAGE.sig" \
+              --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release upload "$TAG" "$APPIMAGE" \
+              --clobber --repo "$GITHUB_REPOSITORY"
+          fi
 
       # SignPath Authenticode-signs the Windows installers. Their bytes change,
       # so the minisign updater signatures tauri-action produced over the
@@ -173,7 +191,7 @@ jobs:
       # patch-updater-manifest job, after every matrix leg has merged, so a
       # parallel macOS/Linux upload cannot clobber the Windows signatures.
       - name: Stage Windows installers for SignPath
-        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/') && env.SIGNPATH_CONFIGURED == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -190,7 +208,7 @@ jobs:
 
       - name: Upload unsigned Windows artifact
         id: upload-windows
-        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/') && env.SIGNPATH_CONFIGURED == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: windows-unsigned
@@ -201,7 +219,7 @@ jobs:
       # The default wait timeout is 600s; bumped so the job survives the time
       # it takes to review and approve the request during a release.
       - name: Submit Windows installers to SignPath
-        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/') && env.SIGNPATH_CONFIGURED == 'true'
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
@@ -214,8 +232,8 @@ jobs:
           wait-for-completion-timeout-in-seconds: 3600
           output-artifact-directory: 'signed'
 
-      - name: Re-sign updater and upload signed Windows installers
-        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+      - name: Upload signed Windows installers
+        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/') && env.SIGNPATH_CONFIGURED == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -234,14 +252,20 @@ jobs:
           }
           Copy-Item $signedExe $env:EXE_REAL_PATH -Force
           Copy-Item $signedMsi $env:MSI_REAL_PATH -Force
-          Remove-Item "$($env:EXE_REAL_PATH).sig" -ErrorAction SilentlyContinue
-          Remove-Item "$($env:MSI_REAL_PATH).sig" -ErrorAction SilentlyContinue
-          pnpm tauri signer sign $env:EXE_REAL_PATH
-          pnpm tauri signer sign $env:MSI_REAL_PATH
-          gh release upload $env:GITHUB_REF_NAME `
-            $env:EXE_REAL_PATH "$($env:EXE_REAL_PATH).sig" `
-            $env:MSI_REAL_PATH "$($env:MSI_REAL_PATH).sig" `
-            --clobber --repo $env:GITHUB_REPOSITORY
+          if ($env:UPDATER_SIGNING_CONFIGURED -eq "true") {
+            Remove-Item "$($env:EXE_REAL_PATH).sig" -ErrorAction SilentlyContinue
+            Remove-Item "$($env:MSI_REAL_PATH).sig" -ErrorAction SilentlyContinue
+            pnpm tauri signer sign $env:EXE_REAL_PATH
+            pnpm tauri signer sign $env:MSI_REAL_PATH
+            gh release upload $env:GITHUB_REF_NAME `
+              $env:EXE_REAL_PATH "$($env:EXE_REAL_PATH).sig" `
+              $env:MSI_REAL_PATH "$($env:MSI_REAL_PATH).sig" `
+              --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release upload $env:GITHUB_REF_NAME `
+              $env:EXE_REAL_PATH $env:MSI_REAL_PATH `
+              --clobber --repo $env:GITHUB_REPOSITORY
+          }
 
   # Patch the re-signed AppImage and SignPath-signed Windows signatures into the
   # combined updater manifest. Runs once, after every matrix leg has finished
@@ -255,8 +279,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      UPDATER_SIGNING_CONFIGURED: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
     steps:
       - name: Patch latest.json with re-signed AppImage and Windows signatures
+        if: env.UPDATER_SIGNING_CONFIGURED == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
